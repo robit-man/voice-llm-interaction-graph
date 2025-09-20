@@ -31,10 +31,10 @@ All pages speak to backends over either **HTTP(S)** or **NKN Relay (DM)** and **
 1. **Serve the static files** (any static host works):
 
    ```bash
-   python3 -m http.server 8080  # or use nginx/serve/etc.
+   python3 server.py
    ```
 
-   Open `http://localhost:8080` and pick a page: **Ollama**, **ASR**, **TTS**, or **Graph**.
+   Open `http://localhost:<port>` (default 443).
 
 2. **Pick a transport (top-left Settings):**
 
