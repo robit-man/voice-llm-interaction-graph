@@ -1,5 +1,18 @@
 # Frontend README — Voice ↔ LLM ↔ TTS Playground (HTTP or NKN Relay)
 
+<p align="center">
+  <a href="https://github.com/robit-man/piper-tts-service">
+    <img alt="piper-tts-service" src="https://img.shields.io/badge/piper--tts--service-OPEN%20ON%20GITHUB-000?style=for-the-badge&logo=github">
+  </a>
+  <a href="https://github.com/robit-man/ollama-nkn-relay">
+    <img alt="ollama-nkn-relay" src="https://img.shields.io/badge/ollama--nkn--relay-OPEN%20ON%20GITHUB-000?style=for-the-badge&logo=github">
+  </a>
+  <a href="https://github.com/robit-man/whisper-asr-service">
+    <img alt="whisper-asr-service" src="https://img.shields.io/badge/whisper--asr--service-OPEN%20ON%20GITHUB-000?style=for-the-badge&logo=github">
+  </a>
+</p>
+
+
 <img width="1889" height="1403" alt="image" src="https://github.com/user-attachments/assets/63259e16-4f65-4dc2-8778-546718c8957e" />
 
 This frontend is a **full, resilient, browser-only control surface** for three services and an end-to-end voice assistant:
