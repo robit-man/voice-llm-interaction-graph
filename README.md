@@ -1,4 +1,4 @@
-# Frontend README — Voice ↔ LLM ↔ TTS Playground (HTTP or NKN Relay)
+# Voice ↔ LLM ↔ TTS Playground (HTTP or NKN Relay)
 
 <p align="center">
   <a target="_blank" href="https://github.com/robit-man/piper-tts-service">
