@@ -1,628 +1,1479 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Realtime Graph — ASR → LLM → TTS</title>
-<style>
-  :root{--bg:#0b0f14;--panel:rgba(255,255,255,.07);--panel2:rgba(255,255,255,.05);--accent:#66e0ff;--accent2:#a8ff60;--text:#e8f1f8;--muted:#a9b6c3;--ok:#7dffb0;--warn:#f9c846;--err:#ff6b6b;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--r:16px;--shadow:0 10px 30px rgba(0,0,0,.35), inset 0 0 1px rgba(255,255,255,.12)}
-  *{box-sizing:border-box}
-  body{margin:0;color:var(--text);font:14px/1.35 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  body::after{content:'';position:fixed;inset:0;z-index:-1;background:
-    radial-gradient(1200px 800px at 10% -10%, #163147, transparent 60%),
-    radial-gradient(900px 600px at 100% 0%, #1b2d18, transparent 55%),
-    var(--bg)}
-  header{display:flex;justify-content:space-between;align-items:center;padding:18px}
-  .brand{display:flex;gap:12px;align-items:center}
-  .logo{width:36px;height:36px;border-radius:12px;background:conic-gradient(from 220deg,var(--accent),#9f78ff,var(--accent2));box-shadow:var(--shadow)}
-  h1{margin:0;font-size:18px}
-  .hint{color:var(--muted);font-size:12px}
-  .badge{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06)}
-  .dot{width:10px;height:10px;border-radius:50%}
-  .dot.ok{background:var(--ok);box-shadow:0 0 10px var(--ok)}
-  .dot.warn{background:var(--warn);box-shadow:0 0 10px var(--warn)}
-  .dot.err{background:var(--err);box-shadow:0 0 10px var(--err)}
-  main{display:grid;gap:14px;padding:0 18px 24px;grid-template-columns:repeat(12,1fr)}
-  .card{grid-column:span 12;background:var(--panel);border:1px solid rgba(255,255,255,.08);border-radius:var(--r);backdrop-filter:blur(8px);padding:14px}
-  @media(min-width:980px){.span-4{grid-column:span 4}.span-8{grid-column:span 8}}
-  h2{margin:0 0 8px;font-size:15px}
-  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-  label{font-size:12px;color:var(--muted);margin-right:6px}
-  input,select,textarea{width:100%;background:var(--panel2);color:var(--text);border:1px solid rgba(255,255,255,.15);border-radius:12px;padding:9px 11px;outline:none}
-  textarea{min-height:84px;resize:vertical}
-  button{background:linear-gradient(180deg,rgba(102,224,255,.9),rgba(102,224,255,.6));color:#001018;border:0;border-radius:12px;padding:9px 12px;font-weight:700;cursor:pointer}
-  button.secondary{background:linear-gradient(180deg,rgba(168,255,96,.9),rgba(168,255,96,.6));color:#021204}
-  button.ghost{background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--text)}
-  button.danger{background:linear-gradient(180deg,rgba(255,107,107,.95),rgba(255,107,107,.7));color:#280a0a}
-  .code{font-family:var(--mono);font-size:12px;background:#04070b;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px;white-space:pre-wrap;max-height:260px;overflow:auto}
-  .bubble{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:10px;border-radius:12px}
-  .muted{color:var(--muted);font-size:12px}
-  .vu{height:8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);overflow:hidden}
-  .vu>b{display:block;height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#eab308,#ef4444)}
-  .port{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border:1px dashed rgba(255,255,255,.25);border-radius:999px;font-family:var(--mono);font-size:12px;cursor:pointer}
-  .port.sel{background:rgba(255,255,255,.1)}
-  audio{width:100%;height:36px}
-  .kv{display:grid;grid-template-columns:110px 1fr;gap:8px}
-  .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(255,255,255,.06);font-family:var(--mono);font-size:12px}
-</style>
-<script src="https://cdn.jsdelivr.net/npm/nkn-sdk@1.3.6/dist/nkn.min.js"></script>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Realtime Graph — ASR → LLM → TTS</title>
+    <style>
+        :root {
+            --bg: #0b0f14;
+            --panel: rgba(255, 255, 255, .07);
+            --panel2: rgba(255, 255, 255, .05);
+            --accent: #66e0ff;
+            --accent2: #a8ff60;
+            --text: #e8f1f8;
+            --muted: #a9b6c3;
+            --ok: #7dffb0;
+            --warn: #f9c846;
+            --err: #ff6b6b;
+            --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            --r: 16px;
+            --shadow: 0 10px 30px rgba(0, 0, 0, .35), inset 0 0 1px rgba(255, 255, 255, .12)
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            color: var(--text);
+            font: 14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial
+        }
+
+        body::after {
+            content: '';
+            position: fixed;
+            inset: 0;
+            z-index: -1;
+            background:
+                radial-gradient(1200px 800px at 10% -10%, #163147, transparent 60%),
+                radial-gradient(900px 600px at 100% 0%, #1b2d18, transparent 55%),
+                var(--bg)
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 18px
+        }
+
+        .brand {
+            display: flex;
+            gap: 12px;
+            align-items: center
+        }
+
+        .logo {
+            width: 36px;
+            height: 36px;
+            border-radius: 12px;
+            background: conic-gradient(from 220deg, var(--accent), #9f78ff, var(--accent2));
+            box-shadow: var(--shadow)
+        }
+
+        h1 {
+            margin: 0;
+            font-size: 18px
+        }
+
+        .hint {
+            color: var(--muted);
+            font-size: 12px
+        }
+
+        .badge {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, .15);
+            background: rgba(255, 255, 255, .06)
+        }
+
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%
+        }
+
+        .dot.ok {
+            background: var(--ok);
+            box-shadow: 0 0 10px var(--ok)
+        }
+
+        .dot.warn {
+            background: var(--warn);
+            box-shadow: 0 0 10px var(--warn)
+        }
+
+        .dot.err {
+            background: var(--err);
+            box-shadow: 0 0 10px var(--err)
+        }
+
+        main {
+            display: grid;
+            gap: 14px;
+            padding: 0 18px 24px;
+            grid-template-columns: repeat(12, 1fr)
+        }
+
+        .card {
+            grid-column: span 12;
+            background: var(--panel);
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: var(--r);
+            backdrop-filter: blur(8px);
+            padding: 14px
+        }
+
+        @media(min-width:980px) {
+            .span-4 {
+                grid-column: span 4
+            }
+
+            .span-8 {
+                grid-column: span 8
+            }
+        }
+
+        h2 {
+            margin: 0 0 8px;
+            font-size: 15px
+        }
+
+        .row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center
+        }
+
+        label {
+            font-size: 12px;
+            color: var(--muted);
+            margin-right: 6px
+        }
+
+        input,
+        select,
+        textarea {
+            width: 100%;
+            background: var(--panel2);
+            color: var(--text);
+            border: 1px solid rgba(255, 255, 255, .15);
+            border-radius: 12px;
+            padding: 9px 11px;
+            outline: none
+        }
+
+        textarea {
+            min-height: 84px;
+            resize: vertical
+        }
+
+        button {
+            background: linear-gradient(180deg, rgba(102, 224, 255, .9), rgba(102, 224, 255, .6));
+            color: #001018;
+            border: 0;
+            border-radius: 12px;
+            padding: 9px 12px;
+            font-weight: 700;
+            cursor: pointer
+        }
+
+        button.secondary {
+            background: linear-gradient(180deg, rgba(168, 255, 96, .9), rgba(168, 255, 96, .6));
+            color: #021204
+        }
+
+        button.ghost {
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, .2);
+            color: var(--text)
+        }
+
+        button.danger {
+            background: linear-gradient(180deg, rgba(255, 107, 107, .95), rgba(255, 107, 107, .7));
+            color: #280a0a
+        }
+
+        .code {
+            font-family: var(--mono);
+            font-size: 12px;
+            background: #04070b;
+            border: 1px solid rgba(255, 255, 255, .12);
+            border-radius: 12px;
+            padding: 10px;
+            white-space: pre-wrap;
+            max-height: 260px;
+            overflow: auto
+        }
+
+        .bubble {
+            background: rgba(255, 255, 255, .06);
+            border: 1px solid rgba(255, 255, 255, .12);
+            padding: 10px;
+            border-radius: 12px
+        }
+
+        .muted {
+            color: var(--muted);
+            font-size: 12px
+        }
+
+        .vu {
+            height: 8px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, .08);
+            border: 1px solid rgba(255, 255, 255, .15);
+            overflow: hidden
+        }
+
+        .vu>b {
+            display: block;
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #22c55e, #eab308, #ef4444)
+        }
+
+        .port {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 8px;
+            border: 1px dashed rgba(255, 255, 255, .25);
+            border-radius: 999px;
+            font-family: var(--mono);
+            font-size: 12px;
+            cursor: pointer
+        }
+
+        .port.sel {
+            background: rgba(255, 255, 255, .1)
+        }
+
+        audio {
+            width: 100%;
+            height: 36px
+        }
+
+        .kv {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 8px
+        }
+
+        .pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            border: 1px solid rgba(255, 255, 255, .18);
+            border-radius: 999px;
+            background: rgba(255, 255, 255, .06);
+            font-family: var(--mono);
+            font-size: 12px
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/nkn-sdk@1.3.6/dist/nkn.min.js"></script>
 </head>
+
 <body>
-<header>
-  <div class="brand">
-    <div class="logo"></div>
-    <div>
-      <h1>Realtime Graph</h1>
-      <div class="hint">ASR → LLM → TTS · HTTP or NKN · Live streaming state visible</div>
-    </div>
-  </div>
-  <div id="status" class="badge"><span class="dot warn"></span><span>Booting…</span></div>
-</header>
+    <header>
+        <div class="brand">
+            <div class="logo"></div>
+            <div>
+                <h1>Realtime Graph</h1>
+                <div class="hint">ASR → LLM → TTS · HTTP or NKN · streaming phrases + smoothed VAD</div>
+            </div>
+        </div>
+        <div id="status" class="badge"><span class="dot warn"></span><span>Booting…</span></div>
+    </header>
 
-<main>
-  <!-- GLOBAL -->
-  <section class="card span-12">
-    <h2>Global</h2>
-    <div class="row">
-      <label>Transport</label>
-      <select id="transport"><option value="http">HTTP(S)</option><option value="nkn">NKN Relay</option></select>
-      <button id="nknConnect">Connect NKN</button>
-      <button class="ghost" id="nknDisconnect">Disconnect</button>
-      <button class="secondary" id="saveAll">Save</button>
-      <span class="muted">NKN: <b id="nknInfo">disconnected</b></span>
-    </div>
-  </section>
+    <main>
+        <!-- GLOBAL -->
+        <section class="card span-12">
+            <h2>Global</h2>
+            <div class="row">
+                <label>Transport</label>
+                <select id="transport">
+                    <option value="http">HTTP(S)</option>
+                    <option value="nkn">NKN Relay</option>
+                </select>
+                <button id="nknConnect">Connect NKN</button>
+                <button class="ghost" id="nknDisconnect">Disconnect</button>
+                <button class="secondary" id="saveAll">Save</button>
+                <span class="muted">NKN: <b id="nknInfo">disconnected</b></span>
+            </div>
+        </section>
 
-  <!-- ASR -->
-  <section class="card span-4" id="asrCard">
-    <h2>ASR</h2>
-    <div class="kv">
-      <label>Base URL</label><input id="asrBase" placeholder="http://localhost:8126"/>
-      <label>NKN Relay</label><input id="asrRelay" placeholder="(full NKN address)"/>
-      <label>API Key</label><input id="asrApi" placeholder="(optional)"/>
-      <label>Rate</label><input id="asrRate" type="number" value="16000"/>
-      <label>Chunk (ms)</label><input id="asrChunk" type="number" value="120"/>
-      <label>Live</label><select id="asrLive"><option value="true" selected>true</option><option value="false">false</option></select>
-      <label>VAD RMS</label><input id="asrRms" type="number" step="0.001" value="0.015"/>
-      <label>Silence ms</label><input id="asrSilence" type="number" value="900"/>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <button id="asrStart">Start</button>
-      <button class="danger" id="asrStop">Stop</button>
-      <span class="pill"><span class="dot ok" id="asrDot"></span><b id="asrState">idle</b></span>
-      <span class="pill">buf:<b id="asrBuf">0</b></span>
-      <span class="pill">out:<b id="asrOut">0</b></span>
-      <span class="pill">events:<b id="asrEvt">—</b></span>
-    </div>
-    <div class="row" style="margin-top:6px;">
-      <div class="vu" style="flex:1"><b id="asrVu"></b></div>
-      <span class="muted">VAD: <span id="asrVad">idle</span></span>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <span class="port" data-port="asr:partial">out · partial</span>
-      <span class="port" data-port="asr:final">out · final</span>
-    </div>
-    <div class="muted" style="margin-top:8px;">Partial</div>
-    <div id="asrPartial" class="bubble" style="min-height:38px"></div>
-    <div class="muted" style="margin-top:8px;">Finals</div>
-    <div id="asrFinals" class="code" style="min-height:70px"></div>
-  </section>
+        <!-- ASR -->
+        <section class="card span-4" id="asrCard">
+            <h2>ASR</h2>
+            <div class="kv">
+                <label>Base URL</label><input id="asrBase" placeholder="http://localhost:8126" />
+                <label>NKN Relay</label><input id="asrRelay" placeholder="(full NKN address)" />
+                <label>API Key</label><input id="asrApi" placeholder="(optional)" />
+                <label>Rate</label><input id="asrRate" type="number" value="16000" />
+                <label>Chunk (ms)</label><input id="asrChunk" type="number" value="120" />
+                <label>Live</label><select id="asrLive">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                </select>
 
-  <!-- LLM -->
-  <section class="card span-4" id="llmCard">
-    <h2>LLM (Ollama)</h2>
-    <div class="kv">
-      <label>Base URL</label><input id="llmBase" placeholder="http://127.0.0.1:11434"/>
-      <label>NKN Relay</label><input id="llmRelay" placeholder="(full NKN address)"/>
-      <label>API Key</label><input id="llmApi" placeholder="(optional)"/>
-      <label>Model</label><select id="llmModel"></select>
-      <label>Stream</label><select id="llmStream"><option value="true" selected>true</option><option value="false">false</option></select>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <button id="llmRefresh">Refresh Models</button>
-      <span class="pill"><span class="dot warn" id="llmDot"></span><b id="llmState">idle</b></span>
-      <span class="pill">tokens:<b id="llmTok">0</b></span>
-      <span class="pill">bytes:<b id="llmBytes">0</b></span>
-      <span class="pill">elapsed:<b id="llmMs">0ms</b></span>
-    </div>
-    <div class="row" style="margin-top:6px;">
-      <span class="port" data-port="llm:prompt">in · prompt</span>
-      <span class="port" data-port="llm:delta">out · delta</span>
-      <span class="port" data-port="llm:final">out · final</span>
-    </div>
-    <div class="muted" style="margin-top:8px;">Streaming tokens</div>
-    <div id="llmTokens" class="code" style="min-height:80px"></div>
-  </section>
+                <!-- VAD controls (smoothing + hysteresis + hangover) -->
+                <label>VAD Thresh</label><input id="asrRms" type="number" step="0.001" value="0.015" />
+                <label>VAD Hangover (ms)</label><input id="asrHold" type="number" value="250" />
+                <label>EMA Window (ms)</label><input id="asrEmaMs" type="number" value="120" />
 
-  <!-- TTS -->
-  <section class="card span-4" id="ttsCard">
-    <h2>TTS</h2>
-    <div class="kv">
-      <label>Base URL</label><input id="ttsBase" placeholder="http://localhost:8123"/>
-      <label>NKN Relay</label><input id="ttsRelay" placeholder="(full NKN address)"/>
-      <label>API Key</label><input id="ttsApi" placeholder="(optional)"/>
-      <label>Voice</label><input id="ttsModel" list="ttsModelList" placeholder="glados_piper_medium or voices/*.onnx"/>
-      <datalist id="ttsModelList"></datalist>
-      <label>Mode</label><select id="ttsMode"><option value="stream" selected>stream (raw)</option><option value="file">file (ogg)</option></select>
-    </div>
-    <div class="row" style="margin-top:8px;">
-      <button id="ttsRefresh">Refresh Voices</button>
-      <span class="pill"><span class="dot warn" id="ttsDot"></span><b id="ttsState">idle</b></span>
-      <span class="pill">chunks:<b id="ttsChunks">0</b></span>
-      <span class="pill">bytes:<b id="ttsBytes">0</b></span>
-      <span class="pill">buf samp:<b id="ttsBuf">0</b></span>
-      <span class="pill">buf ms:<b id="ttsBufMs">0</b></span>
-      <span class="pill">underruns:<b id="ttsUrun">0</b></span>
-      <span class="pill">AC:<b id="ttsAC">—</b></span>
-    </div>
-    <div class="row" style="margin-top:6px;">
-      <span class="port" data-port="tts:text">in · text</span>
-    </div>
-    <audio id="ttsAudio" controls style="margin-top:8px"></audio>
-    <div class="muted" id="ttsMeta" style="margin-top:6px;">—</div>
-  </section>
+                <!-- phrase streaming -->
+                <label>Phrase Stream</label><select id="asrPhraseOn">
+                    <option value="true" selected>on</option>
+                    <option value="false">off</option>
+                </select>
+                <label>Min Words</label><input id="asrPhraseMin" type="number" value="3" />
+                <label>Stable (ms)</label><input id="asrPhraseStable" type="number" value="350" />
 
-  <!-- WIRES -->
-  <section class="card span-12">
-    <h2>Wires</h2>
-    <div class="row">
-      <button class="secondary" id="wireToggle">Wire Mode: <b id="wireState">ON</b></button>
-      <button class="ghost" id="clearWires">Clear</button>
-      <span class="muted">Click source then destination to connect.</span>
-    </div>
-    <div id="wiresBox" class="code" style="margin-top:8px;min-height:54px"></div>
-  </section>
+                <!-- batch-only -->
+                <!-- in ASR .kv -->
+                <label>Silence End (ms)</label><input id="asrSilence" type="number" value="900" />
 
-  <!-- LOGS -->
-  <section class="card span-12">
-    <h2>Status / Logs</h2>
-    <div id="logBox" class="code" style="min-height:120px">(logs)</div>
-  </section>
-</main>
+                <!-- NEW: decoding prompt -->
+                <label>Prompt</label>
+                <textarea id="asrPrompt" placeholder="Bias decoding: keywords, names, spellings…"></textarea>
 
-<script>
-/* ======== tiny helpers ======== */
-const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d}},set(k,v){localStorage.setItem(k,JSON.stringify(v))}};
-const qs=s=>document.querySelector(s); const qsa=s=>Array.from(document.querySelectorAll(s));
-const j=x=>{try{return JSON.stringify(x,null,2)}catch{return String(x)}};
-function log(s){const b=qs('#logBox'); b.textContent=(b.textContent+'\n'+s).trim().slice(-9000); b.scrollTop=b.scrollHeight}
-function setBadge(msg,ok=true){qs('#status').innerHTML=`<span class="dot ${ok?'ok':'err'}"></span><span>${msg}</span>`;}
-const td=new TextDecoder(); function b64ToBytes(b64){const bin=atob(b64);const u8=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u8[i]=bin.charCodeAt(i);return u8}
+            </div>
+            <div class="row" style="margin-top:8px;">
+                <button id="asrStart">Start</button>
+                <button class="danger" id="asrStop">Stop</button>
+                <span class="pill"><span class="dot ok" id="asrDot"></span><b id="asrState">idle</b></span>
+                <span class="pill">buf:<b id="asrBuf">0</b></span>
+                <span class="pill">out:<b id="asrOut">0</b></span>
+                <span class="pill">events:<b id="asrEvt">—</b></span>
+            </div>
+            <div class="row" style="margin-top:6px;">
+                <div class="vu" style="flex:1"><b id="asrVu"></b></div>
+                <span class="muted">VAD: <span id="asrVad">idle</span></span>
+                <span class="muted">RMS: <span id="asrRmsVal">0</span></span>
+            </div>
+            <div class="row" style="margin-top:8px;">
+                <span class="port" data-port="asr:partial">out · partial</span>
+                <span class="port" data-port="asr:phrase">out · phrase</span>
+                <span class="port" data-port="asr:final">out · final</span>
+            </div>
+            <div class="muted" style="margin-top:8px;">Partial</div>
+            <div id="asrPartial" class="bubble" style="min-height:38px"></div>
+            <div class="muted" style="margin-top:8px;">Phrases (streamed)</div>
+            <div id="asrPhrases" class="bubble" style="min-height:38px;max-height:96px;overflow:auto"></div>
+            <div class="muted" style="margin-top:8px;">Finals</div>
+            <div id="asrFinals" class="code" style="min-height:70px"></div>
+        </section>
 
-/* ======== persisted config ======== */
-const CFG=LS.get('graph.cfg',{
-  transport:'http',
-  asr:{base:'http://localhost:8126',relay:'',api:'',rate:16000,chunk:120,live:true,rms:0.015,silence:900},
-  llm:{base:'http://127.0.0.1:11434',relay:'',api:'',model:'',stream:true},
-  tts:{base:'http://localhost:8123',relay:'',api:'',model:'',mode:'stream'},
-  wireMode:true,
-  wires:[{from:'asr:final',to:'llm:prompt'},{from:'llm:final',to:'tts:text'}]
-});
-function saveCFG(){LS.set('graph.cfg',CFG)}
+        <!-- LLM -->
+        <section class="card span-4" id="llmCard">
+            <h2>LLM (Ollama)</h2>
+            <div class="kv">
+                <label>Base URL</label><input id="llmBase" placeholder="http://127.0.0.1:11434" />
+                <label>NKN Relay</label><input id="llmRelay" placeholder="(full NKN address)" />
+                <label>API Key</label><input id="llmApi" placeholder="(optional)" />
+                <label>Model</label><select id="llmModel"></select>
+                <label>Stream</label><select id="llmStream">
+                    <option value="true" selected>true</option>
+                    <option value="false">false</option>
+                </select>
+            </div>
+            <div class="row" style="margin-top:8px;">
+                <button id="llmRefresh">Refresh Models</button>
+                <span class="pill"><span class="dot warn" id="llmDot"></span><b id="llmState">idle</b></span>
+                <span class="pill">tokens:<b id="llmTok">0</b></span>
+                <span class="pill">bytes:<b id="llmBytes">0</b></span>
+                <span class="pill">elapsed:<b id="llmMs">0ms</b></span>
+            </div>
+            <div class="row" style="margin-top:6px;">
+                <span class="port" data-port="llm:prompt">in · prompt</span>
+                <span class="port" data-port="llm:delta">out · delta</span>
+                <span class="port" data-port="llm:final">out · final</span>
+            </div>
+            <div class="muted" style="margin-top:8px;">Streaming tokens</div>
+            <div id="llmTokens" class="code" style="min-height:80px"></div>
+        </section>
 
-/* ======== network (http+nkn) ======== */
-const Net={
-  nkn:{client:null,ready:false,addr:'',pend:new Map(),streams:new Map()},
-  auth(h={},api){const out=Object.assign({'Content-Type':'application/json'},h); if(api) out['X-API-Key']=api; return out},
-  async getJSON(base,path,api,useNkn,relay){
-    if(!useNkn){ const r=await fetch(base.replace(/\/+$/,'')+path,{headers:this.auth({},api)}); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json() }
-    return this.nknFetch(base,path,'GET',null,api,relay)
-  },
-  async postJSON(base,path,body,api,useNkn,relay,timeout=45000){
-    if(!useNkn){ const r=await fetch(base.replace(/\/+$/,'')+path,{method:'POST',headers:this.auth({},api),body:JSON.stringify(body||{})}); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json() }
-    return this.nknFetch(base,path,'POST',body,api,relay,timeout)
-  },
-  async fetchBlob(fullUrl,useNkn,relay,api){
-    if(!useNkn){ const r=await fetch(fullUrl,{headers:this.auth({},api)}); if(!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.blob() }
-    return this.nknFetchBlob(fullUrl,relay,api)
-  },
-  ensureNkn(){
-    if(CFG.transport!=='nkn') return;
-    if(this.nkn.client) return;
-    if(!window.nkn||!window.nkn.MultiClient){ setBadge('nkn-sdk missing',false); return }
-    const c=new window.nkn.MultiClient({identifier:'graph',numSubClients:4,wsConnHeartbeatTimeout:60000}); this.nkn.client=c;
-    c.on('connect',()=>{this.nkn.ready=true;this.nkn.addr=c.addr||'';qs('#nknInfo').textContent=`connected • ${this.nkn.addr.slice(0,10)}…`;setBadge('NKN ready')});
-    c.on('close',()=>{this.nkn.ready=false;qs('#nknInfo').textContent='connecting…'});
-    c.on('message',(a,b)=>{
-      let p=(a&&typeof a==='object'&&a.payload!==undefined)?a.payload:b;
-      try{
-        const msg=JSON.parse((p&&p.toString)?p.toString():String(p));
-        const ev=msg.event||''; const id=msg.id;
-        if(ev==='relay.response'&&id){ const pr=this.nkn.pend.get(id); if(pr){ clearTimeout(pr.t); this.nkn.pend.delete(id); pr.res(msg) } }
-        if(/^relay\.response\.(begin|chunk|end)$/.test(ev)&&id){
-          const st=this.nkn.streams.get(id); if(!st) return;
-          if(ev==='relay.response.begin'){ st.onBegin && st.onBegin(msg); return }
-          if(ev==='relay.response.chunk'){ const u8=b64ToBytes(msg.b64||''); st.onChunk && st.onChunk(u8,msg.seq|0); return }
-          if(ev==='relay.response.end'){ st.onEnd && st.onEnd(msg); this.nkn.streams.delete(id); return }
+        <!-- TTS -->
+        <section class="card span-4" id="ttsCard">
+            <h2>TTS</h2>
+            <div class="kv">
+                <label>Base URL</label><input id="ttsBase" placeholder="http://localhost:8123" />
+                <label>NKN Relay</label><input id="ttsRelay" placeholder="(full NKN address)" />
+                <label>API Key</label><input id="ttsApi" placeholder="(optional)" />
+                <label>Voice</label><input id="ttsModel" list="ttsModelList"
+                    placeholder="glados_piper_medium or voices/*.onnx" />
+                <datalist id="ttsModelList"></datalist>
+                <label>Mode</label><select id="ttsMode">
+                    <option value="stream" selected>stream (raw)</option>
+                    <option value="file">file (ogg)</option>
+                </select>
+            </div>
+            <div class="row" style="margin-top:8px;">
+                <button id="ttsRefresh">Refresh Voices</button>
+                <span class="pill"><span class="dot warn" id="ttsDot"></span><b id="ttsState">idle</b></span>
+                <span class="pill">chunks:<b id="ttsChunks">0</b></span>
+                <span class="pill">bytes:<b id="ttsBytes">0</b></span>
+                <span class="pill">buf samp:<b id="ttsBuf">0</b></span>
+                <span class="pill">buf ms:<b id="ttsBufMs">0</b></span>
+                <span class="pill">underruns:<b id="ttsUrun">0</b></span>
+                <span class="pill">AC:<b id="ttsAC">—</b></span>
+            </div>
+            <div class="row" style="margin-top:6px;">
+                <span class="port" data-port="tts:text">in · text</span>
+            </div>
+            <audio id="ttsAudio" controls style="margin-top:8px"></audio>
+            <div class="muted" id="ttsMeta" style="margin-top:6px;">—</div>
+        </section>
+
+        <!-- WIRES -->
+        <section class="card span-12">
+            <h2>Wires</h2>
+            <div class="row">
+                <button class="secondary" id="wireToggle">Wire Mode: <b id="wireState">ON</b></button>
+                <button class="ghost" id="clearWires">Clear</button>
+                <span class="muted">Click source then destination to connect.</span>
+            </div>
+            <div id="wiresBox" class="code" style="margin-top:8px;min-height:54px"></div>
+        </section>
+
+        <!-- LOGS -->
+        <section class="card span-12">
+            <h2>Status / Logs</h2>
+            <div id="logBox" class="code" style="min-height:120px">(logs)</div>
+        </section>
+    </main>
+    <script>
+        /* ======== tiny helpers ======== */
+        const LS = { get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } }, set(k, v) { localStorage.setItem(k, JSON.stringify(v)) } };
+        const qs = s => document.querySelector(s); const qsa = s => Array.from(document.querySelectorAll(s));
+        const j = x => { try { return JSON.stringify(x, null, 2) } catch { return String(x) } };
+        function log(s) { const b = qs('#logBox'); if (!b) return; b.textContent = (b.textContent + '\n' + s).trim().slice(-9000); b.scrollTop = b.scrollHeight }
+        function setBadge(msg, ok = true) { const el = qs('#status'); if (!el) return; el.innerHTML = `<span class="dot ${ok ? 'ok' : 'err'}"></span><span>${msg}</span>`; }
+        const td = new TextDecoder(); function b64ToBytes(b64) { const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++)u8[i] = bin.charCodeAt(i); return u8 }
+
+        /* ======== persisted config ======== */
+        const CFG = LS.get('graph.cfg', {
+            transport: 'http',
+            asr: {
+                base: 'http://localhost:8126', relay: '', api: '',
+                rate: 16000, chunk: 120, live: true,
+                rms: 0.015, hold: 250, emaMs: 120,
+                phraseOn: true, phraseMin: 3, phraseStable: 350,
+                silence: 900,
+                prompt: ''            // NEW
+            },
+            llm: { base: 'http://127.0.0.1:11434', relay: '', api: '', model: '', stream: true },
+            tts: { base: 'http://localhost:8123', relay: '', api: '', model: '', mode: 'stream' },
+            wireMode: true,
+            wires: [{ from: 'asr:phrase', to: 'llm:prompt' }, { from: 'llm:final', to: 'tts:text' }]
+        });
+
+        function saveCFG() { LS.set('graph.cfg', CFG) }
+
+        /* ======== network (http+nkn) ======== */
+        const Net = {
+            nkn: { client: null, ready: false, addr: '', pend: new Map(), streams: new Map() },
+            auth(h = {}, api) {
+                const out = Object.assign({}, h);
+                if (!out['Content-Type']) out['Content-Type'] = 'application/json';
+                if (api) {
+                    if (/^Bearer\s+/i.test(api)) out['Authorization'] = api;
+                    else out['X-API-Key'] = api;
+                }
+                return out;
+            },
+            async getJSON(base, path, api, useNkn, relay) {
+                if (!useNkn) {
+                    const r = await fetch(base.replace(/\/+$/, '') + path, { headers: this.auth({}, api) });
+                    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json();
+                }
+                return this.nknFetch(base, path, 'GET', null, api, relay)
+            },
+            async postJSON(base, path, body, api, useNkn, relay, timeout = 45000) {
+                if (!useNkn) {
+                    const r = await fetch(base.replace(/\/+$/, '') + path, { method: 'POST', headers: this.auth({}, api), body: JSON.stringify(body || {}) });
+                    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json();
+                }
+                return this.nknFetch(base, path, 'POST', body, api, relay, timeout)
+            },
+            async fetchBlob(fullUrl, useNkn, relay, api) {
+                if (!useNkn) { const r = await fetch(fullUrl, { headers: this.auth({}, api) }); if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.blob() }
+                return this.nknFetchBlob(fullUrl, relay, api)
+            },
+            ensureNkn() {
+                if (CFG.transport !== 'nkn') return;
+                if (this.nkn.client) return;
+                if (!window.nkn || !window.nkn.MultiClient) { setBadge('nkn-sdk missing', false); return }
+                const c = new window.nkn.MultiClient({ identifier: 'graph', numSubClients: 4, wsConnHeartbeatTimeout: 60000 }); this.nkn.client = c;
+                c.on('connect', () => { this.nkn.ready = true; this.nkn.addr = c.addr || ''; const i = qs('#nknInfo'); if (i) i.textContent = `connected • ${this.nkn.addr.slice(0, 10)}…`; setBadge('NKN ready') });
+                c.on('close', () => { this.nkn.ready = false; const i = qs('#nknInfo'); if (i) i.textContent = 'connecting…' });
+                // inside Net.ensureNkn(), the client 'message' handler:
+                c.on('message', (a, b) => {
+                    let p = (a && typeof a === 'object' && a.payload !== undefined) ? a.payload : b;
+                    try {
+                        const msg = JSON.parse((p && p.toString) ? p.toString() : String(p));
+                        const ev = msg.event || ''; const id = msg.id;
+
+                        // single-shot responses
+                        if (ev === 'relay.response' && id) {
+                            const pr = this.nkn.pend.get(id);
+                            if (pr) { clearTimeout(pr.t); this.nkn.pend.delete(id); pr.res(msg) }
+                            return;
+                        }
+
+                        // streamed CHUNK bytes (audio/raw/sse passthrough)
+                        if (/^relay\.response\.(begin|chunk|end)$/.test(ev) && id) {
+                            const st = this.nkn.streams.get(id); if (!st) return;
+                            if (ev === 'relay.response.begin') { st.onBegin && st.onBegin(msg); return }
+                            if (ev === 'relay.response.chunk') { const u8 = b64ToBytes(msg.b64 || ''); st.onChunk && st.onChunk(u8, msg.seq | 0); return }
+                            if (ev === 'relay.response.end') { st.onEnd && st.onEnd(msg); this.nkn.streams.delete(id); return }
+                            return;
+                        }
+
+                        // NEW: streamed NDJSON *lines* (ordered batches) used by Ollama chat/generate
+                        if (ev === 'relay.response.lines' && id) {
+                            const st = this.nkn.streams.get(id); if (!st) return;
+                            const arr = Array.isArray(msg.lines) ? msg.lines : [];
+                            // maintain ordering: lines have { seq, line, ts }
+                            for (const item of arr) {
+                                try { st.onLine && st.onLine(item.line, item.seq | 0, item.ts) } catch { }
+                            }
+                            return;
+                        }
+
+                        if (/^relay\.response\.(begin|chunk|end)$/.test(ev) && id) {
+                            const st = this.nkn.streams.get(id); if (!st) return;
+                            if (ev === 'relay.response.begin') { st.onBegin && st.onBegin(msg); return }
+                            if (ev === 'relay.response.chunk') {
+                                const u8 = b64ToBytes(msg.b64 || '');
+                                st.onChunk && st.onChunk(u8, msg.seq | 0);
+                                return
+                            }
+                            if (ev === 'relay.response.end') {
+                                try { st.onEnd && st.onEnd(msg) } finally { /* resolve handled in wrapper */ }
+                                return
+                            }
+                            return;
+                        }
+
+                    } catch { }
+                });
+
+            },
+            async nknSend(req, relay, timeout = 45000) {
+                if (!relay) throw new Error('No relay'); if (!this.nkn.client) this.ensureNkn();
+                const id = 'g-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+                return new Promise((res, rej) => {
+                    const t = setTimeout(() => { this.nkn.pend.delete(id); rej(new Error('NKN relay timeout')) }, timeout);
+                    this.nkn.pend.set(id, { res, rej, t });
+                    this.nkn.client.send(relay, JSON.stringify({ event: 'http.request', id, req }), { noReply: true, maxHoldingSeconds: 120 })
+                        .catch(e => { clearTimeout(t); this.nkn.pend.delete(id); rej(e) });
+                });
+            },
+            async nknStream(req, relay, handlers = {}, timeout = 300000) {
+                if (!relay) throw new Error('No relay');
+                if (!this.nkn.client) this.ensureNkn();
+
+                const id = 'g-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+
+                return new Promise(async (resolve, reject) => {
+                    let to = null;
+                    const wrapped = {
+                        onBegin: (...args) => { try { handlers.onBegin && handlers.onBegin(...args) } catch { } },
+                        onLine: (...args) => { try { handlers.onLine && handlers.onLine(...args) } catch { } },
+                        onChunk: (...args) => { try { handlers.onChunk && handlers.onChunk(...args) } catch { } },
+                        onEnd: (...args) => {
+                            try { handlers.onEnd && handlers.onEnd(...args) } catch { }
+                            clearTimeout(to);
+                            this.nkn.streams.delete(id);
+                            resolve();
+                        },
+                        onError: (err) => {
+                            clearTimeout(to);
+                            this.nkn.streams.delete(id);
+                            reject(err instanceof Error ? err : new Error(String(err || 'nkn stream error')));
+                        }
+                    };
+                    this.nkn.streams.set(id, wrapped);
+
+                    try {
+                        await this.nkn.client.send(
+                            relay,
+                            JSON.stringify({ event: 'http.request', id, req: Object.assign({ stream: 'chunks' }, req) }),
+                            { noReply: true, maxHoldingSeconds: 120 }
+                        );
+                    } catch (e) {
+                        this.nkn.streams.delete(id);
+                        return reject(e);
+                    }
+
+                    to = setTimeout(() => {
+                        const st = this.nkn.streams.get(id);
+                        if (st) {
+                            this.nkn.streams.delete(id);
+                            reject(new Error('NKN stream timeout'));
+                        }
+                    }, timeout);
+                });
+            },
+            async nknFetch(base, path, method, json, api, relay, timeout = 45000) {
+                const req = { url: base.replace(/\/+$/, '') + path, method, headers: this.auth({}, api), timeout_ms: timeout }; if (json !== null) req.json = json;
+                const r = await this.nknSend(req, relay, timeout); if (!r || r.ok === false) throw new Error((r && r.error) || ('HTTP ' + (r && r.status)));
+                if (r.json !== undefined && r.json !== null) return r.json;
+                if (r.body_b64) { const u8 = b64ToBytes(r.body_b64); return JSON.parse(td.decode(u8)) }
+                return null;
+            },
+            async nknFetchBlob(fullUrl, relay, api) {
+                const parts = []; let ctype = 'application/octet-stream';
+                await this.nknStream({ url: fullUrl, method: 'GET', headers: this.auth({ 'X-Relay-Stream': 'chunks' }, api), timeout_ms: 10 * 60 * 1000 }, relay, {
+                    onBegin: (m) => { const h = m.headers || {}; ctype = h['content-type'] || h['Content-Type'] || ctype },
+                    onChunk: (u8) => parts.push(u8),
+                    onEnd: () => { }
+                });
+                return new Blob(parts, { type: ctype })
+            }
+        };
+
+        /* ======== wiring ======== */
+        const Router = {
+            ports: new Map(), wires: CFG.wires.slice(), sel: null,
+            register(key, el, onrecv) { if (!el) return; this.ports.set(key, { el, onrecv }); el.addEventListener('click', () => { if (!CFG.wireMode) return; if (!this.sel) { this.sel = key; el.classList.add('sel'); return } const from = this.sel; this.clearSel(); if (from === key) return; if (!this.wires.find(w => w.from === from && w.to === key)) { this.wires.push({ from, to: key }); CFG.wires = this.wires.slice(); saveCFG(); this.render(); log(`wired ${from} → ${key}`) } }) },
+            clearSel() { qsa('.port.sel').forEach(e => e.classList.remove('sel')); this.sel = null },
+            send(from, payload) { for (const w of this.wires) { if (w.from === from) { const p = this.ports.get(w.to); try { p && p.onrecv && p.onrecv(payload, from, w.to) } catch (e) { log(`wire error ${w.from}→${w.to}: ${e.message}`) } } } },
+            render() { const box = qs('#wiresBox'); if (!box) return; box.textContent = this.wires.length ? this.wires.map((w, i) => `${i + 1}. ${w.from} → ${w.to}`).join('\n') : '(no wires)' },
+            clear() { this.wires.length = 0; CFG.wires = []; saveCFG(); this.render() }
+        };
+
+        /* ======== ASR (smoother VAD + phrase streaming) ======== */
+        const ASR = {
+            running: false, ac: null, node: null, media: null, source: null, bufF32: new Float32Array(0), out: 0, sid: null,
+            // VAD state
+            vad: { ema: 0, state: 'silence', lastVoice: 0, lastSilence: 0 },
+            // phrase stream aggregator
+            aggr: { prev: '', pend: '', pendStart: 0, lastChange: 0, lastEmit: 0 },
+
+            pushF32(f32) { const a = this.bufF32, b = f32; const out = new Float32Array(a.length + b.length); out.set(a, 0); out.set(b, a.length); this.bufF32 = out; const el = qs('#asrBuf'); if (el) el.textContent = String(out.length) },
+            drainF32(n) { const a = this.bufF32; const take = Math.min(a.length, n); const head = a.subarray(0, take); this.bufF32 = a.subarray(take).slice(0); const el = qs('#asrBuf'); if (el) el.textContent = String(this.bufF32.length); return head },
+            vu(p) { const el = qs('#asrVu'); if (el) el.style.width = Math.max(0, Math.min(100, Math.round(p * 150))) + '%' },
+            resample(f, fr, tr) { if (fr === tr) return f.slice(0); const r = tr / fr, L = Math.round(f.length * r), o = new Float32Array(L); for (let i = 0; i < L; i++) { const pos = i / r, i0 = Math.floor(pos), i1 = Math.min(i0 + 1, f.length - 1), t = pos - i0; o[i] = f[i0] * (1 - t) + f[i1] * t } return o },
+            i16(f32) { const o = new Int16Array(f32.length); for (let i = 0; i < f32.length; i++) { const v = Math.max(-1, Math.min(1, f32[i])); o[i] = v < 0 ? v * 0x8000 : v * 0x7FFF } return new Uint8Array(o.buffer) },
+            setState(txt, cls = 'ok') { const s = qs('#asrState'); const d = qs('#asrDot'); if (s) s.textContent = txt; if (d) d.className = 'dot ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : 'warn') },
+            printPartial(t) { const el = qs('#asrPartial'); if (el) el.textContent = t || ''; Router.send('asr:partial', { type: 'text', text: t || '' }) },
+            addPhrase(t) { if (!t) return; const box = qs('#asrPhrases'); if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + t; box.scrollTop = box.scrollHeight; } Router.send('asr:phrase', { type: 'text', text: t }) },
+            appendFinal(t) { const box = qs('#asrFinals'); if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + (t || ''); box.scrollTop = box.scrollHeight; } Router.send('asr:final', { type: 'text', text: t || '' }) },
+
+            ssePump(onEvent) { let buf = ''; return (u8) => { buf += td.decode(u8, { stream: true }); let i; while ((i = buf.indexOf('\n\n')) >= 0) { const chunk = buf.slice(0, i); buf = buf.slice(i + 2); let ev = null, data = ''; for (const line of chunk.split(/\r?\n/)) { if (!line) continue; if (line.startsWith(':')) continue; if (line.startsWith('event:')) ev = line.slice(6).trim(); else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim() } if (data) onEvent(ev || 'message', data) } } },
+
+            resetAggr() { this.aggr.prev = ''; this.aggr.pend = ''; this.aggr.pendStart = 0; this.aggr.lastChange = 0; },
+
+            handlePartialForPhrases(text) {
+                if ((qs('#asrPhraseOn')?.value) !== 'true') return; // disabled
+                const minW = parseInt(qs('#asrPhraseMin')?.value || '3', 10) || 3;
+                const stableMs = parseInt(qs('#asrPhraseStable')?.value || '350', 10) || 350;
+
+                const prev = this.aggr.prev || '';
+                if (!text.startsWith(prev)) {
+                    this.aggr.prev = text;
+                    this.aggr.pend = ''; this.aggr.pendStart = performance.now(); this.aggr.lastChange = this.aggr.pendStart;
+                    return;
+                }
+                const added = text.slice(prev.length);
+                const now = performance.now();
+                if (added.length > 0) {
+                    if (!this.aggr.pend) this.aggr.pendStart = now;
+                    this.aggr.pend += added;
+                    this.aggr.prev = text;
+                    this.aggr.lastChange = now;
+                } else {
+                    const words = (this.aggr.pend.trim().match(/\S+/g) || []).length;
+                    const punct = /[.!?;:,]$/.test(this.aggr.pend.trim());
+                    if (this.aggr.pend && words >= minW && (punct || (now - this.aggr.lastChange) >= stableMs)) {
+                        const phrase = this.aggr.pend.trim();
+                        this.addPhrase(phrase);
+                        this.aggr.pend = ''; this.aggr.pendStart = 0; this.aggr.lastChange = now;
+                    }
+                }
+            },
+
+            handleFinalFlush(text) {
+                if (this.aggr.pend) {
+                    this.addPhrase(this.aggr.pend.trim());
+                    this.aggr.pend = '';
+                } else {
+                    if (text.startsWith(this.aggr.prev || '')) {
+                        const extra = text.slice((this.aggr.prev || '').length).trim();
+                        if (extra) this.addPhrase(extra);
+                    }
+                }
+                this.aggr.prev = text;
+            },
+
+            async start() {
+                if (this.running) return;
+                const rate = parseInt(qs('#asrRate')?.value || '16000', 10) || 16000;
+                const chunk = parseInt(qs('#asrChunk')?.value || '120', 10) || 120;
+                const live = (qs('#asrLive')?.value) === 'true';
+                const rmsTh = parseFloat(qs('#asrRms')?.value || '0.015') || 0.015;
+                const holdMs = parseInt(qs('#asrHold')?.value || '250', 10) || 250;
+                const emaMs = parseInt(qs('#asrEmaMs')?.value || '120', 10) || 120;
+                const silence = parseInt(qs('#asrSilence')?.value || '900', 10) || 900;
+
+                const viaNkn = CFG.transport === 'nkn', base = CFG.asr.base, relay = CFG.asr.relay, api = CFG.asr.api;
+
+                try {
+                    this.ac = new (window.AudioContext || window.webkitAudioContext)();
+                    this.media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }, video: false });
+                    this.source = this.ac.createMediaStreamSource(this.media);
+                    this.node = (this.ac.createScriptProcessor ? this.ac.createScriptProcessor(2048, 1, 1) : new ScriptProcessorNode(this.ac, { bufferSize: 2048, numberOfInputs: 1, numberOfOutputs: 1 }));
+                    const from = this.ac.sampleRate | 0 || rate;
+                    const bufDurMs = (this.node.bufferSize / from) * 1000;
+                    const alpha = 1 - Math.exp(-bufDurMs / Math.max(emaMs, 1));
+                    this.vad.ema = 0; this.vad.state = 'silence'; this.vad.lastVoice = 0; this.vad.lastSilence = performance.now();
+
+                    let batchQuietSince = null;
+
+                    this.node.onaudioprocess = (e) => {
+                        const ch = e.inputBuffer.getChannelData(0);
+                        let sum = 0; for (let i = 0; i < ch.length; i++) sum += ch[i] * ch[i];
+                        const rmsCur = Math.sqrt(sum / ch.length);
+                        this.vad.ema = (1 - alpha) * this.vad.ema + alpha * rmsCur;
+                        const ema = this.vad.ema;
+
+                        const onTh = rmsTh;
+                        const offTh = rmsTh * 0.7;
+                        const now = performance.now();
+
+                        if (this.vad.state === 'silence') {
+                            if (ema >= onTh) { this.vad.state = 'voice'; this.vad.lastVoice = now; }
+                        } else {
+                            if (ema < offTh) {
+                                if (now - (this.vad.lastVoice || now) >= holdMs) {
+                                    this.vad.state = 'silence'; this.vad.lastSilence = now;
+                                    if (this.aggr.pend) {
+                                        this.addPhrase(this.aggr.pend.trim());
+                                        this.aggr.pend = '';
+                                    }
+                                }
+                            } else {
+                                this.vad.lastVoice = now;
+                            }
+                        }
+
+                        this.vu(ema); const v = qs('#asrVad'); if (v) v.textContent = this.vad.state; const rv = qs('#asrRmsVal'); if (rv) rv.textContent = ema.toFixed(3);
+
+                        const f32 = (from === rate) ? ch.slice(0) : this.resample(ch, from, rate); this.pushF32(f32);
+
+                        if (!live) {
+                            if (ema < offTh) { batchQuietSince = batchQuietSince ?? now; if (now - batchQuietSince >= silence) { batchQuietSince = null; this.finalizeOnce(rate).catch(() => { }); } }
+                            else batchQuietSince = null;
+                        }
+                    };
+                    this.source.connect(this.node); this.node.connect(this.ac.destination);
+                } catch (e) { this.setState('mic error', 'err'); log('[asr] ' + e.message); return }
+
+                const p = qs('#asrPartial'); if (p) p.textContent = ''; const f = qs('#asrFinals'); if (f) f.textContent = ''; const ph = qs('#asrPhrases'); if (ph) ph.textContent = '';
+                this.resetAggr();
+                this.running = true; this.out = 0; const ao = qs('#asrOut'); if (ao) ao.textContent = '0'; this.setState(live ? 'streaming' : 'batch', 'warn');
+
+                if (live) {
+                    // in ASR.start(), when live === true
+                    try {
+                        const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
+                        const body = prompt ? { prompt } : {};
+                        const data = await Net.postJSON(base, '/recognize/stream/start', body, api, viaNkn, relay, 45000);
+                        this.sid = (data && (data.sid || data.id || data.session)) || null; if (!this.sid) throw new Error('no sid')
+                    }
+                    catch (e) { this.setState('start fail', 'err'); log('[asr] start ' + e.message); this.stop(); return }
+
+                    this.openEvents(this.sid, viaNkn, base, relay, api).catch(() => { });
+                    this.flushLoop(rate, chunk, viaNkn, base, relay, api).catch(() => { });
+                } else {
+                    this.setState('ready (batch)', 'ok');
+                }
+            },
+
+            async stop() {
+                if (!this.running) return; this.setState('stopping', 'warn');
+                this.running = false;
+                try { this.node && this.node.disconnect() } catch { } try { this.source && this.source.disconnect() } catch { }
+                try { this.media && this.media.getTracks().forEach(t => t.stop()) } catch { } try { this.ac && this.ac.close() } catch { }
+                this.node = this.source = this.media = this.ac = null;
+                this.bufF32 = new Float32Array(0); const ab = qs('#asrBuf'); if (ab) ab.textContent = '0'; const av = qs('#asrVad'); if (av) av.textContent = 'idle';
+                if (this.sid) { try { await Net.postJSON(CFG.asr.base, `/recognize/stream/${encodeURIComponent(this.sid)}/end`, {}, CFG.asr.api, CFG.transport === 'nkn', CFG.asr.relay, 20000) } catch { } }
+                this.sid = null; this.setState('idle', 'ok');
+            },
+
+            async finalizeOnce(rate) {
+                if (!this.bufF32.length) return;
+                const pcm = this.bufF32; const b = new ArrayBuffer(44 + pcm.length * 2); const v = new DataView(b); let o = 0;
+                const W4 = s => { for (let i = 0; i < 4; i++)v.setUint8(o++, s.charCodeAt(i)) }; const U32 = n => { v.setUint32(o, n, true); o += 4 }; const U16 = n => { v.setUint16(o, n, true); o += 2 };
+                const sr = rate, bps = 16, ch = 1, ba = ch * bps / 8, br = sr * ba;
+                W4('RIFF'); U32(36 + pcm.length * 2); W4('WAVE'); W4('fmt '); U32(16); U16(1); U16(1); U32(sr); U32(br); U16(ba); U16(bps); W4('data'); U32(pcm.length * 2);
+                for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) < 0 ? pcm[i] * 0x8000 : pcm[i] * 0x7FFF, true);
+                const b64 = btoa(String.fromCharCode(...new Uint8Array(b))); this.bufF32 = new Float32Array(0);
+                try {
+                    const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
+                    const body = Object.assign({ wav_b64: b64 }, prompt ? { prompt } : {});
+                    const data = await Net.postJSON(CFG.asr.base, '/asr', body, CFG.asr.api, CFG.transport === 'nkn', CFG.asr.relay, 120000);
+                    const txt = (data && (data.text || data.transcript)) || '';
+                    if (txt) this.appendFinal(txt);
+                }
+                catch (e) { log('[asr] finalize ' + e.message) }
+
+            },
+
+            async openEvents(sid, viaNkn, base, relay, api) {
+                const pump = this.ssePump((ev, data) => {
+                    try {
+                        const obj = JSON.parse(data); const t = (obj.type || obj.event || '').toLowerCase();
+                        if (t === 'asr.partial' || t === 'partial') {
+                            const text = obj.text || (obj.result && obj.result.text) || '';
+                            this.printPartial(text);
+                            this.handlePartialForPhrases(text);
+                        } else if (t === 'asr.detected' || t === 'detected') {
+                            const s = obj.text || (obj.result && obj.result.text) || '';
+                            if (s) this.addPhrase(s);
+                        } else if (t === 'asr.final' || t === 'final') {
+                            const s = (obj.result && obj.result.text) || obj.text || '';
+                            if (s) { this.handleFinalFlush(s); this.appendFinal(s); }
+                            this.printPartial('');
+                        } else if (t === 'error') {
+                            log('[asr] ' + (obj.message || obj.error || 'error'));
+                        }
+                        const e = qs('#asrEvt'); if (e) e.textContent = t;
+                    } catch { }
+                });
+                const ev = qs('#asrEvt'); if (ev) ev.textContent = 'connecting';
+                if (viaNkn) {
+                    await Net.nknStream({ url: base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(sid)}/events`, method: 'GET', headers: Net.auth({ 'X-Relay-Stream': 'chunks' }, api), timeout_ms: 10 * 60 * 1000 }, relay, {
+                        onBegin: () => { const e = qs('#asrEvt'); if (e) e.textContent = 'open'; this.setState('streaming', 'ok'); },
+                        onChunk: (bytes) => pump(bytes),
+                        onEnd: () => { const e = qs('#asrEvt'); if (e) e.textContent = 'ended'; }
+                    });
+                } else {
+                    const r = await fetch(base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(sid)}/events`, { headers: Net.auth({}, api) });
+                    if (!r.ok || !r.body) { const e = qs('#asrEvt'); if (e) e.textContent = 'error'; return }
+                    const e = qs('#asrEvt'); if (e) e.textContent = 'open';
+                    const reader = r.body.getReader(); while (true) { const { value, done } = await reader.read(); if (done) break; if (value && value.byteLength) pump(value) }
+                    const ed = qs('#asrEvt'); if (ed) ed.textContent = 'ended';
+                }
+            },
+
+            async flushLoop(rate, chunk, viaNkn, base, relay, api) {
+                const need = () => Math.round(rate * (chunk / 1000));
+                while (this.running && this.sid) {
+                    if (this.bufF32.length >= need() && this.out < 4) {
+                        const f32 = this.drainF32(need()); const bytes = this.i16(f32);
+                        const url = base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(this.sid)}/audio?format=pcm16&sr=${rate}`;
+                        this.out++; const ao = qs('#asrOut'); if (ao) ao.textContent = String(this.out);
+                        try {
+                            if (viaNkn) { await Net.nknSend({ url, method: 'POST', headers: Net.auth({ 'Content-Type': 'application/octet-stream' }, api), body_b64: btoa(String.fromCharCode(...bytes)), timeout_ms: 20000 }, relay, 20000) }
+                            else { const r = await fetch(url, { method: 'POST', headers: Net.auth({ 'Content-Type': 'application/octet-stream' }, api), body: bytes }); if (!r.ok) throw new Error(r.status + ' ' + r.statusText) }
+                        } catch (e) { log('[asr] audio send ' + (e && e.message || e)) }
+                        finally { this.out--; const ao2 = qs('#asrOut'); if (ao2) ao2.textContent = String(this.out) }
+                    }
+                    await new Promise(r => setTimeout(r, Math.max(10, chunk / 2)));
+                }
+            }
+        };
+
+        /* ======== LLM (robust NDJSON/SSE streaming → sentence mux to TTS) ======== */
+        const EOT_TOKENS = ["<|eot_id|>", "</s>"];
+        function stripEOT(s) { let out = s || ''; for (const t of EOT_TOKENS) { if (t) out = out.split(t).join('') } return out }
+
+        function makeNdjsonPump(onLine) {
+            const dec = new TextDecoder('utf-8'); let buf = '';
+            return {
+                push(chunk) {
+                    const s = (chunk instanceof Uint8Array || chunk instanceof ArrayBuffer) ? dec.decode(chunk, { stream: true }) : String(chunk);
+                    buf += s;
+                    let idx;
+                    while ((idx = buf.indexOf('\n')) >= 0) {
+                        let ln = buf.slice(0, idx).trim();
+                        buf = buf.slice(idx + 1);
+                        if (!ln) continue;
+                        if (ln.startsWith('data:')) ln = ln.slice(5).trim();
+                        onLine(ln);
+                    }
+                },
+                flush() {
+                    let ln = buf.trim();
+                    if (ln) {
+                        if (ln.startsWith('data:')) ln = ln.slice(5).trim();
+                        onLine(ln);
+                    }
+                    buf = '';
+                }
+            };
         }
-      }catch{}
-    });
-  },
-  waitReady(){return new Promise((res,rej)=>{ if(this.nkn.ready) return res(); this.ensureNkn(); const t=setTimeout(()=>{cleanup();rej(new Error('NKN timeout'))},20000); const fn=()=>{cleanup();res()}; const cleanup=()=>{clearTimeout(t)}; (this.nkn.client?res:()=>{}); this.nkn.client?res():void 0 })},
-  async nknSend(req,relay,timeout=45000){
-    if(!relay) throw new Error('No relay'); if(!this.nkn.client) this.ensureNkn();
-    const id='g-'+Date.now()+'-'+Math.random().toString(36).slice(2);
-    return new Promise((res,rej)=>{
-      const t=setTimeout(()=>{this.nkn.pend.delete(id); rej(new Error('NKN relay timeout'))},timeout);
-      this.nkn.pend.set(id,{res,rej,t});
-      this.nkn.client.send(relay,JSON.stringify({event:'http.request',id,req}),{noReply:true,maxHoldingSeconds:120})
-        .catch(e=>{clearTimeout(t);this.nkn.pend.delete(id);rej(e)});
-    });
-  },
-  async nknStream(req,relay,handlers={},timeout=300000){
-    if(!relay) throw new Error('No relay'); if(!this.nkn.client) this.ensureNkn();
-    const id='g-'+Date.now()+'-'+Math.random().toString(36).slice(2);
-    this.nkn.streams.set(id,handlers);
-    await this.nkn.client.send(relay,JSON.stringify({event:'http.request',id,req:Object.assign({stream:'chunks'},req)}),{noReply:true,maxHoldingSeconds:120});
-    // caller logs/states via handlers
-  },
-  async nknFetch(base,path,method,json,api,relay,timeout=45000){
-    const req={url:base.replace(/\/+$/,'')+path,method,headers:this.auth({},api),timeout_ms:timeout}; if(json!==null) req.json=json;
-    const r=await this.nknSend(req,relay,timeout); if(!r||r.ok===false) throw new Error((r&&r.error)||('HTTP '+(r&&r.status)));
-    if(r.json!==undefined && r.json!==null) return r.json;
-    if(r.body_b64){ const u8=b64ToBytes(r.body_b64); return JSON.parse(td.decode(u8)) }
-    return null;
-  },
-  async nknFetchBlob(fullUrl,relay,api){
-    const parts=[]; let ctype='application/octet-stream';
-    await this.nknStream({url:fullUrl,method:'GET',headers:this.auth({'X-Relay-Stream':'chunks'},api),timeout_ms:10*60*1000}, relay, {
-      onBegin:(m)=>{ const h=m.headers||{}; ctype=h['content-type']||h['Content-Type']||ctype },
-      onChunk:(u8)=>parts.push(u8),
-      onEnd:()=>{}
-    });
-    return new Blob(parts,{type:ctype})
-  }
-};
 
-/* ======== wiring ======== */
-const Router={
-  ports:new Map(), wires:CFG.wires.slice(), sel:null,
-  register(key,el,onrecv){ this.ports.set(key,{el,onrecv}); el.addEventListener('click',()=>{ if(!CFG.wireMode) return; if(!this.sel){ this.sel=key; el.classList.add('sel'); return } const from=this.sel; this.clearSel(); if(from===key) return; if(!this.wires.find(w=>w.from===from&&w.to===key)){ this.wires.push({from,to:key}); CFG.wires=this.wires.slice(); saveCFG(); this.render(); log(`wired ${from} → ${key}`) } })},
-  clearSel(){ qsa('.port.sel').forEach(e=>e.classList.remove('sel')); this.sel=null },
-  send(from,payload){ for(const w of this.wires){ if(w.from===from){ const p=this.ports.get(w.to); try{ p&&p.onrecv&&p.onrecv(payload,from,w.to) }catch(e){ log(`wire error ${w.from}→${w.to}: ${e.message}`) } } } },
-  render(){ qs('#wiresBox').textContent = this.wires.length? this.wires.map((w,i)=>`${i+1}. ${w.from} → ${w.to}`).join('\n') : '(no wires)' },
-  clear(){ this.wires.length=0; CFG.wires=[]; saveCFG(); this.render() }
-};
+        // Sentence boundary detector used for LLM deltas → TTS
+        // Emits only complete sentences in-order.
+        const SentenceMux = {
+            carry: '',
+            // allow boundaries: . ! ? ; : (when followed by space or end), bullet/newline, or emoji+space/newline
+            SENT_RE: /([\s\S]*?)(?:([.!?;:](?:["')\]]+)*)\s+|(\n{2,}|\r?\n[-*•]\s+)|((?:\p{Extended_Pictographic}|\p{Emoji_Presentation})+\s+))/u,
+            pushDelta(delta, emitFn) {
+                if (!delta) return;
+                this.carry += delta;
 
-/* ======== ASR (prints partials+finals; streams audio) ======== */
-const ASR={
-  running:false, ac:null,node:null,media:null,source:null, bufF32:new Float32Array(0), out:0, sid:null,
-  pushF32(f32){const a=this.bufF32,b=f32;const out=new Float32Array(a.length+b.length);out.set(a,0);out.set(b,a.length);this.bufF32=out;qs('#asrBuf').textContent=String(out.length)},
-  drainF32(n){const a=this.bufF32;const take=Math.min(a.length,n);const head=a.subarray(0,take);this.bufF32=a.subarray(take).slice(0);qs('#asrBuf').textContent=String(this.bufF32.length);return head},
-  vu(p){qs('#asrVu').style.width=Math.max(0,Math.min(100,Math.round(p*120)))+'%'},
-  resample(f,fr,tr){ if(fr===tr) return f.slice(0); const r=tr/fr,L=Math.round(f.length*r),o=new Float32Array(L); for(let i=0;i<L;i++){const pos=i/r,i0=Math.floor(pos),i1=Math.min(i0+1,f.length-1),t=pos-i0; o[i]=f[i0]*(1-t)+f[i1]*t} return o },
-  i16(f32){const o=new Int16Array(f32.length);for(let i=0;i<f32.length;i++){const v=Math.max(-1,Math.min(1,f32[i]));o[i]=v<0?v*0x8000:v*0x7FFF} return new Uint8Array(o.buffer)},
-  printPartial(t){qs('#asrPartial').textContent=t||''; Router.send('asr:partial',{type:'text',text:t||''})},
-  appendFinal(t){const box=qs('#asrFinals'); box.textContent=(box.textContent?box.textContent+'\n':'')+(t||''); box.scrollTop=box.scrollHeight; Router.send('asr:final',{type:'text',text:t||''})},
-  ssePump(onEvent){ let buf=''; return (u8)=>{ buf+=td.decode(u8,{stream:true}); let i; while((i=buf.indexOf('\n\n'))>=0){ const chunk=buf.slice(0,i); buf=buf.slice(i+2); let ev=null,data=''; for(const line of chunk.split(/\r?\n/)){ if(!line) continue; if(line.startsWith(':')) continue; if(line.startsWith('event:')) ev=line.slice(6).trim(); else if(line.startsWith('data:')) data+=(data?'\n':'')+line.slice(5).trim() } if(data) onEvent(ev||'message',data) } } },
-  setState(txt,cls='ok'){ qs('#asrState').textContent=txt; qs('#asrDot').className='dot '+(cls==='ok'?'ok':cls==='err'?'err':'warn') },
+                // Normalize accidental no-space joins from token streams
+                this.carry = this.carry.replace(/(\p{Extended_Pictographic}|\p{Emoji_Presentation})(?=\w)/gu, '$1 ');
 
-  async start(){
-    if(this.running) return;
-    const rate=parseInt(qs('#asrRate').value||'16000',10)||16000;
-    const chunk=parseInt(qs('#asrChunk').value||'120',10)||120;
-    const live=qs('#asrLive').value==='true';
-    const rms=parseFloat(qs('#asrRms').value||'0.015')||0.015;
-    const silence=parseInt(qs('#asrSilence').value||'900',10)||900;
-    const viaNkn=CFG.transport==='nkn', base=CFG.asr.base, relay=CFG.asr.relay, api=CFG.asr.api;
+                let guard = 0;
+                while (guard++ < 1000) {
+                    const m = this.SENT_RE.exec(this.carry);
+                    if (!m) break;
 
-    try{
-      this.ac=new (window.AudioContext||window.webkitAudioContext)();
-      this.media=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false},video:false});
-      this.source=this.ac.createMediaStreamSource(this.media);
-      this.node=(this.ac.createScriptProcessor?this.ac.createScriptProcessor(2048,1,1):new ScriptProcessorNode(this.ac,{bufferSize:2048,numberOfInputs:1,numberOfOutputs:1}));
-      const from=this.ac.sampleRate|0||rate; let quietSince=null;
-      this.node.onaudioprocess=(e)=>{
-        const ch=e.inputBuffer.getChannelData(0);
-        let s=0; for(let i=0;i<ch.length;i++) s+=ch[i]*i?ch[i]:ch[i]*1; // keep cheap
-        const rmsCur=Math.sqrt(s/ch.length); this.vu(rmsCur); qs('#asrVad').textContent=rmsCur>rms?'voice':'silence';
-        const f32=(from===rate)?ch.slice(0):this.resample(ch,from,rate); this.pushF32(f32);
-        if(!live){ const t=performance.now(); if(rmsCur<=rms){ quietSince=quietSince??t; if(t-quietSince>=silence){ quietSince=null; this.finalizeOnce(rate).catch(()=>{}); } } else quietSince=null; }
-      };
-      this.source.connect(this.node); this.node.connect(this.ac.destination);
-    }catch(e){ this.setState('mic error','err'); log('[asr] '+e.message); return }
+                    const head = (m[1] || '').trim();
+                    const punc = (m[2] || '').trim();
+                    const bullet = (m[3] || '').trim();
+                    const emoji = (m[4] || '').trim();
+                    const boundary = punc || bullet || emoji;
 
-    qs('#asrPartial').textContent=''; qs('#asrFinals').textContent='';
-    this.running=true; this.out=0; qs('#asrOut').textContent='0'; this.setState(live?'streaming':'batch','warn');
+                    if (!boundary) break;
 
-    if(live){
-      try{ const data=await Net.postJSON(base,'/recognize/stream/start',{},api,viaNkn,relay,45000); this.sid=(data&&(data.sid||data.id||data.session))||null; if(!this.sid) throw new Error('no sid') }
-      catch(e){ this.setState('start fail','err'); log('[asr] start '+e.message); this.stop(); return }
-      this.openEvents(this.sid,viaNkn,base,relay,api).catch(()=>{});
-      this.flushLoop(rate,chunk,viaNkn,base,relay,api).catch(()=>{});
-    }else{
-      this.setState('ready (batch)','ok');
-    }
-  },
+                    const sentence = (head + (punc ? punc : '')).trim();
+                    const cut = m.index + (m[0] || '').length;
+                    this.carry = this.carry.slice(cut);
 
-  async stop(){
-    if(!this.running) return; this.setState('stopping','warn');
-    this.running=false;
-    try{this.node&&this.node.disconnect()}catch{} try{this.source&&this.source.disconnect()}catch{}
-    try{this.media&&this.media.getTracks().forEach(t=>t.stop())}catch{} try{this.ac&&this.ac.close()}catch{}
-    this.node=this.source=this.media=this.ac=null;
-    this.bufF32=new Float32Array(0); qs('#asrBuf').textContent='0'; qs('#asrVad').textContent='idle';
-    if(this.sid){ try{ await Net.postJSON(CFG.asr.base,`/recognize/stream/${encodeURIComponent(this.sid)}/end`,{},CFG.asr.api,CFG.transport==='nkn',CFG.asr.relay,20000) }catch{} }
-    this.sid=null; this.setState('idle','ok');
-  },
+                    if (sentence) emitFn(sentence);
+                }
+            },
+            flush(emitFn) {
+                const s = this.carry.trim();
+                this.carry = '';
+                if (s) emitFn(s);
+            }
+        };
 
-  async finalizeOnce(rate){
-    if(!this.bufF32.length) return;
-    // WAV encode quick
-    const pcm=this.bufF32; const b=new ArrayBuffer(44+pcm.length*2); const v=new DataView(b); let o=0;
-    const W4=s=>{for(let i=0;i<4;i++)v.setUint8(o++,s.charCodeAt(i))}; const U32=n=>{v.setUint32(o,n,true);o+=4}; const U16=n=>{v.setUint16(o,n,true);o+=2};
-    const sr=rate,bps=16,ch=1,ba=ch*bps/8,br=sr*ba;
-    W4('RIFF');U32(36+pcm.length*2);W4('WAVE');W4('fmt ');U32(16);U16(1);U16(1);U32(sr);U32(br);U16(ba);U16(bps);W4('data');U32(pcm.length*2);
-    for(let i=0;i<pcm.length;i++) v.setInt16(44+i*2, Math.max(-1,Math.min(1,pcm[i]))<0?pcm[i]*0x8000:pcm[i]*0x7FFF,true);
-    const b64=btoa(String.fromCharCode(...new Uint8Array(b))); this.bufF32=new Float32Array(0);
-    try{ const data=await Net.postJSON(CFG.asr.base,'/asr',{wav_b64:b64},CFG.asr.api,CFG.transport==='nkn',CFG.asr.relay,120000); const txt=(data&&(data.text||data.transcript))||''; if(txt) this.appendFinal(txt); }
-    catch(e){ log('[asr] finalize '+e.message) }
-  },
+        const LLM = {
+            async refreshModels() {
+                try {
+                    const data = await Net.getJSON(CFG.llm.base, '/api/tags', CFG.llm.api, CFG.transport === 'nkn', CFG.llm.relay);
+                    const arr = (data?.models || []).map(m => m.name || m.model).filter(Boolean);
+                    const sel = qs('#llmModel'); if (!sel) return; sel.innerHTML = ''; arr.forEach(n => { const o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o) });
+                    if (arr.length) { CFG.llm.model = (CFG.llm.model && arr.includes(CFG.llm.model)) ? CFG.llm.model : arr[0]; sel.value = CFG.llm.model; saveCFG(); log('[llm] models ok') }
+                } catch (e) { log('[llm] tags ' + e.message) }
+            },
+            setState(txt, cls = 'ok') { const s = qs('#llmState'); const d = qs('#llmDot'); if (s) s.textContent = txt; if (d) d.className = 'dot ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : 'warn') },
 
-  async openEvents(sid,viaNkn,base,relay,api){
-    const pump=this.ssePump((ev,data)=>{ try{
-      const obj=JSON.parse(data); const t=(obj.type||obj.event||'').toLowerCase(); if(t==='asr.partial'||t==='partial'){ this.printPartial(obj.text||(obj.result&&obj.result.text)||'') }
-      else if(t==='asr.final'||t==='final'){ const s=(obj.result&&obj.result.text)||obj.text||''; if(s) this.appendFinal(s); this.printPartial('') }
-      qs('#asrEvt').textContent = t;
-    }catch{} });
-    qs('#asrEvt').textContent='connecting';
-    if(viaNkn){
-      await Net.nknStream({url:base.replace(/\/+$/,'')+`/recognize/stream/${encodeURIComponent(sid)}/events`,method:'GET',headers:Net.auth({},api),timeout_ms:10*60*1000}, relay, {
-        onBegin:()=>{ qs('#asrEvt').textContent='open'; this.setState('streaming','ok'); },
-        onChunk:(bytes)=>pump(bytes),
-        onEnd:()=>{ qs('#asrEvt').textContent='ended'; }
-      });
-    }else{
-      const r=await fetch(base.replace(/\/+$/,'')+`/recognize/stream/${encodeURIComponent(sid)}/events`,{headers:Net.auth({},api)});
-      if(!r.ok||!r.body){ qs('#asrEvt').textContent='error'; return }
-      qs('#asrEvt').textContent='open';
-      const reader=r.body.getReader(); while(true){ const {value,done}=await reader.read(); if(done) break; if(value&&value.byteLength) pump(value) }
-      qs('#asrEvt').textContent='ended';
-    }
-  },
+            async onPrompt(payload) {
+                const text = (payload && (payload.text || payload.prompt || payload)) || '';
+                const model = qs('#llmModel')?.value || CFG.llm.model || '';
+                if (!model) { this.setState('no model', 'err'); return }
+                const stream = (qs('#llmStream')?.value) === 'true';
+                const viaNkn = CFG.transport === 'nkn', base = CFG.llm.base, api = CFG.llm.api, relay = CFG.llm.relay;
+                const out = qs('#llmTokens'); if (out) out.textContent = ''; let full = ''; let tok = 0; let bytes = 0; const t0 = performance.now();
+                const upd = () => { const t = qs('#llmTok'); if (t) t.textContent = String(tok); const b = qs('#llmBytes'); if (b) b.textContent = String(bytes); const m = qs('#llmMs'); if (m) m.textContent = String(Math.round(performance.now() - t0)) + 'ms' };
 
-  async flushLoop(rate,chunk,viaNkn,base,relay,api){
-    const need=()=>Math.round(rate*(chunk/1000));
-    while(this.running&&this.sid){
-      if(this.bufF32.length>=need() && this.out<4){
-        const f32=this.drainF32(need()); const bytes=this.i16(f32);
-        const url=base.replace(/\/+$/,'')+`/recognize/stream/${encodeURIComponent(this.sid)}/audio?format=pcm16&sr=${rate}`;
-        this.out++; qs('#asrOut').textContent=String(this.out);
-        try{
-          if(viaNkn){ await Net.nknSend({url,method:'POST',headers:Net.auth({'Content-Type':'application/octet-stream'},api),body_b64:btoa(String.fromCharCode(...bytes)),timeout_ms:20000}, relay,20000) }
-          else { const r=await fetch(url,{method:'POST',headers:Net.auth({'Content-Type':'application/octet-stream'},api),body:bytes}); if(!r.ok) throw new Error(r.status+' '+r.statusText) }
-        }catch(e){ log('[asr] audio send '+(e&&e.message||e)) }
-        finally{ this.out--; qs('#asrOut').textContent=String(this.out) }
-      }
-      await new Promise(r=>setTimeout(r,Math.max(10,chunk/2)));
-    }
-  }
-};
+                // emit sentences to TTS strictly in arrival order
+                const emitSentence = (s) => {
+                    // s is a complete sentence; tell TTS to treat it atomically
+                    Router.send('tts:text', { text: s, eos: true });
+                };
 
-/* ======== LLM (prints streaming tokens; shows state) ======== */
-const LLM={
-  async refreshModels(){
-    try{
-      const data=await Net.getJSON(CFG.llm.base,'/api/tags',CFG.llm.api,CFG.transport==='nkn',CFG.llm.relay);
-      const arr=(data?.models||[]).map(m=>m.name||m.model).filter(Boolean);
-      const sel=qs('#llmModel'); sel.innerHTML=''; arr.forEach(n=>{const o=document.createElement('option');o.value=n;o.textContent=n;sel.appendChild(o)});
-      if(arr.length){ CFG.llm.model=(CFG.llm.model && arr.includes(CFG.llm.model))?CFG.llm.model:arr[0]; sel.value=CFG.llm.model; saveCFG(); log('[llm] models ok') }
-    }catch(e){ log('[llm] tags '+e.message) }
-  },
-  setState(txt,cls='ok'){ qs('#llmState').textContent=txt; qs('#llmDot').className='dot '+(cls==='ok'?'ok':cls==='err'?'err':'warn') },
+                const handleLine = (ln) => {
+                    try {
+                        bytes += ln.length; const obj = JSON.parse(ln);
+                        const delta = (obj.message && typeof obj.message.content === 'string') ? obj.message.content : (typeof obj.response === 'string' ? obj.response : '');
+                        if (delta) {
+                            const clean = stripEOT(delta);
+                            full += clean;
+                            if (out) { out.textContent += clean; out.scrollTop = out.scrollHeight }
+                            tok += (clean.match(/\S+/g) || []).length; upd();
+                            SentenceMux.pushDelta(clean, emitSentence);
+                            Router.send('llm:delta', { type: 'text', text: clean });
+                        }
+                    } catch {
+                        if (ln && ln !== '[DONE]') {
+                            const clean = stripEOT(ln);
+                            full += clean;
+                            if (out) { out.textContent += clean; out.scrollTop = out.scrollHeight }
+                            tok += (clean.match(/\S+/g) || []).length; upd();
+                            SentenceMux.pushDelta(clean, emitSentence);
+                        }
+                    }
+                };
 
-  async onPrompt(payload){
-    const text=(payload && (payload.text||payload.prompt||payload)) || '';
-    const model=qs('#llmModel').value || CFG.llm.model || '';
-    if(!model){ this.setState('no model','err'); return }
-    const stream=qs('#llmStream').value==='true';
-    const viaNkn=CFG.transport==='nkn', base=CFG.llm.base, api=CFG.llm.api, relay=CFG.llm.relay;
-    const out=qs('#llmTokens'); out.textContent=''; let full=''; let tok=0; let bytes=0; const t0=performance.now();
-    const upd=()=>{ qs('#llmTok').textContent=String(tok); qs('#llmBytes').textContent=String(bytes); qs('#llmMs').textContent=String(Math.round(performance.now()-t0))+'ms' };
+                try {
+                    if (stream) {
+                        this.setState('streaming', 'warn'); upd();
+                        const pump = makeNdjsonPump(handleLine);
+                        const body = { model, messages: [{ role: 'user', content: text }], stream: true };
 
-    const handleLine=(ln)=>{ try{
-      bytes += ln.length; const obj=JSON.parse(ln);
-      const delta=(obj.message && typeof obj.message.content==='string') ? obj.message.content : (typeof obj.response==='string'?obj.response:'');
-      if(delta){ full+=delta; out.textContent+=delta; tok += (delta.match(/\S+/g)||[]).length; out.scrollTop=out.scrollHeight; Router.send('llm:delta',{type:'text',text:delta}); upd(); }
-    }catch{} };
+                        if (viaNkn) {
+                            await Net.nknStream({
+                                url: base.replace(/\/+$/, '') + '/api/chat',
+                                method: 'POST',
+                                headers: Net.auth({ 'X-Relay-Stream': 'chunks', 'Accept': 'application/x-ndjson' }, api),
+                                json: body,
+                                timeout_ms: 180000
+                            }, relay, {
+                                onBegin: () => { this.setState('stream open', 'warn') },
+                                onLine: (line) => pump.push(line + '\n'),
+                                onChunk: (u8) => pump.push(u8),
+                                onEnd: () => { pump.flush(); SentenceMux.flush(emitSentence); this.setState('done', 'ok') }
+                            }, 180000);
 
-    this.setState('streaming','warn'); upd();
+                        } else {
+                            const r = await fetch(base.replace(/\/+$/, '') + '/api/chat', {
+                                method: 'POST',
+                                headers: Net.auth({ 'Accept': 'application/x-ndjson', 'Content-Type': 'application/json' }, api),
+                                body: JSON.stringify(body) // FIX: use body, not payload
+                            });
+                            if (!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
+                            const reader = r.body.getReader();
+                            while (true) { const { value, done } = await reader.read(); if (done) break; if (value && value.byteLength) pump.push(value) }
+                            pump.flush();
+                            SentenceMux.flush(emitSentence);
+                            this.setState('done', 'ok');
+                        }
+                    } else {
+                        const data = await Net.postJSON(base, '/api/chat', { model, messages: [{ role: 'user', content: text }], stream: false }, api, viaNkn, relay, 120000);
+                        full = (data?.message?.content) || (data?.response) || '';
+                        full = stripEOT(full);
+                        tok = (full.match(/\S+/g) || []).length; bytes = full.length; upd();
+                        if (out) out.textContent = full; this.setState('done', 'ok');
 
-    try{
-      if(stream){
-        if(viaNkn){
-          await Net.nknStream({url:base.replace(/\/+$/,'')+'/api/chat',method:'POST',headers:Net.auth({'X-Relay-Stream':'chunks'},api),json:{model,messages:[{role:'user',content:text}],stream:true},timeout_ms:180000}, relay, {
-            onBegin:()=>{ this.setState('stream open','warn') },
-            onChunk:(u8)=>{ const s=td.decode(u8); s.split(/\r?\n/).forEach(ln=>{ if(ln.trim()) handleLine(ln) }) },
-            onEnd:()=>{ this.setState('done','ok') }
-          }, 180000);
-        }else{
-          const r=await fetch(base.replace(/\/+$/,'')+'/api/chat',{method:'POST',headers:Net.auth({},api),body:JSON.stringify({model,messages:[{role:'user',content:text}],stream:true})});
-          if(!r.ok||!r.body) throw new Error(`${r.status} ${r.statusText}`);
-          const reader=r.body.getReader(); let rest=''; while(true){ const {value,done}=await reader.read(); if(done) break; if(!value) continue; const s=td.decode(value,{stream:true}); const comb=rest+s; const lines=comb.split(/\r?\n/); rest=lines.pop()||''; lines.forEach(ln=>{ if(ln.trim()) handleLine(ln) }) }
-          if(rest.trim()) handleLine(rest);
-          this.setState('done','ok');
+                        // In non-streaming mode just emit entire text at once
+                        SentenceMux.pushDelta(full + '\n', emitSentence);
+                        SentenceMux.flush(emitSentence);
+                    }
+                    Router.send('llm:final', { type: 'text', text: full });
+                } catch (e) { this.setState('error', 'err'); log('[llm] ' + e.message) }
+            }
+        };
+
+        /* ======== TTS (streams PCM; probes voices endpoints; strict FIFO of sentences) ======== */
+        const TTS = {
+            models: [], lastOk: 0, timer: null, slow: 180000, fast: 30000,
+
+            async _probeVoices() {
+                const viaNkn = CFG.transport === 'nkn', base = CFG.tts.base, relay = CFG.tts.relay, api = CFG.tts.api;
+                const paths = ['/voices', '/models', '/api/voices', '/api/models'];
+                const normalize = (data) => {
+                    const pick = (arr) => arr.map(v => {
+                        if (typeof v === 'string') return v;
+                        if (v && typeof v === 'object') {
+                            return v.name || v.model || v.id || v.voice || '';
+                        }
+                        return '';
+                    }).filter(Boolean);
+                    if (Array.isArray(data)) return pick(data);
+                    if (!data || typeof data !== 'object') return [];
+                    if (Array.isArray(data.voices)) return pick(data.voices);
+                    if (Array.isArray(data.models)) return pick(data.models);
+                    if (Array.isArray(data.items)) return pick(data.items);
+                    if (data.data && Array.isArray(data.data)) return pick(data.data);
+                    return [];
+                };
+                for (const p of paths) {
+                    try {
+                        const resp = await Net.getJSON(base, p, api, viaNkn, relay);
+                        const arr = normalize(resp);
+                        if (arr.length) return arr;
+                    } catch { }
+                }
+                return [];
+            },
+
+            async refreshModels() {
+                try {
+                    const arr = await this._probeVoices();
+                    const dl = qs('#ttsModelList'); if (dl) dl.innerHTML = '';
+                    arr.forEach(n => { const o = document.createElement('option'); o.value = n; if (dl) dl.appendChild(o) });
+                    this.models = arr;
+                    if (arr.length) {
+                        this.lastOk = Date.now();
+                        CFG.tts.model = (CFG.tts.model && arr.includes(CFG.tts.model)) ? CFG.tts.model : arr[0];
+                        const m = qs('#ttsModel'); if (m) m.value = CFG.tts.model;
+                        saveCFG(); log('[tts] voices ok');
+                    } else {
+                        log('[tts] no voices');
+                    }
+                } catch (e) { log('[tts] models ' + e.message) }
+                finally { clearTimeout(this.timer); const have = this.models.length > 0; this.timer = setTimeout(() => this.refreshModels(), have ? this.slow : this.fast); }
+            },
+            setState(txt, cls = 'ok') { const s = qs('#ttsState'); const d = qs('#ttsDot'); if (s) s.textContent = txt; if (d) d.className = 'dot ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : 'warn') },
+
+            _ac: null, _node: null, _q: [], _queued: 0, _underruns: 0, _sr: 22050,
+
+            // Text FIFO to enforce strict sentence ordering
+            _textQ: [],
+            _busy: false,
+
+            ensureAC() {
+                if (this._ac) return this._ac;
+                this._ac = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 22050 });
+                this._sr = this._ac.sampleRate || 22050; const ac = qs('#ttsAC'); if (ac) ac.textContent = this._sr + 'Hz';
+                const n = this._node = this._ac.createScriptProcessor(4096, 1, 1);
+                n.onaudioprocess = (e) => {
+                    const out = e.outputBuffer.getChannelData(0);
+                    if (!this._q.length) { out.fill(0); this._underruns++; const u = qs('#ttsUrun'); if (u) u.textContent = String(this._underruns); return }
+                    let need = out.length, off = 0;
+                    while (need > 0) {
+                        if (!this._q.length) { out.fill(0, off); this._underruns++; const u = qs('#ttsUrun'); if (u) u.textContent = String(this._underruns); break }
+                        const head = this._q[0]; const take = Math.min(need, head.length);
+                        out.set(head.subarray(0, take), off);
+                        if (take === head.length) this._q.shift(); else this._q[0] = head.subarray(take);
+                        this._queued -= take; off += take; need -= take;
+                    }
+                    const tb = qs('#ttsBuf'); if (tb) tb.textContent = String(this._queued);
+                    const tbm = qs('#ttsBufMs'); if (tbm) tbm.textContent = String(Math.round(this._queued / this._sr * 1000));
+                };
+                n.connect(this._ac.destination);
+                return this._ac;
+            },
+            int16ToF32(int16) { const f = new Float32Array(int16.length); for (let i = 0; i < int16.length; i++) f[i] = Math.max(-1, Math.min(1, int16[i] / 32768)); return f },
+            enqueueF32(f) { this._q.push(f); this._queued += f.length; const tb = qs('#ttsBuf'); if (tb) tb.textContent = String(this._queued); const tbm = qs('#ttsBufMs'); if (tbm) tbm.textContent = String(Math.round(this._queued / this._sr * 1000)); },
+            resampleLinear(input, fromRate, toRate) {
+                if (fromRate === toRate) return input;
+                const ratio = toRate / fromRate;
+                const L = Math.round(input.length * ratio);
+                const out = new Float32Array(L);
+                for (let i = 0; i < L; i++) {
+                    const pos = i / ratio;
+                    const i0 = Math.floor(pos);
+                    const i1 = Math.min(i0 + 1, input.length - 1);
+                    const t = pos - i0;
+                    out[i] = input[i0] * (1 - t) + input[i1] * t;
+                }
+                return out;
+            },
+            // Add to TTS object fields:
+            _ingressCarry: '',   // buffered partial text from deltas
+            _lastSentences: [],  // tiny de-dup ring to avoid accidental repeats
+
+            // Helper: split buffer into complete sentences + remainder
+            _splitComplete(buf) {
+                const closes = `"'’”)]`;                  // common closing marks after punctuation
+                const isClose = c => closes.includes(c);
+                const isWS = c => /\s/.test(c || '');
+
+                const out = [];
+                let start = 0, i = 0;
+                while (i < buf.length) {
+                    const ch = buf[i];
+                    if ('.!?;:…'.includes(ch)) {
+                        // consume trailing closers: e.g. .") or ?’]
+                        let j = i + 1;
+                        while (j < buf.length && isClose(buf[j])) j++;
+                        // boundary if end or whitespace follows
+                        if (j >= buf.length || isWS(buf[j])) {
+                            const sent = buf.slice(start, j).trim();
+                            if (sent) out.push(sent);
+                            // skip following whitespace
+                            while (j < buf.length && isWS(buf[j])) j++;
+                            start = j; i = j; continue;
+                        }
+                    }
+                    i++;
+                }
+                return { complete: out, rest: buf.slice(start) };
+            },
+
+            // Helper: small de-dup on very recent outputs (defensive)
+            _seenRecently(s) {
+                const key = s.slice(0, 120); // cheap key
+                const hit = this._lastSentences.includes(key);
+                if (!hit) {
+                    this._lastSentences.push(key);
+                    if (this._lastSentences.length > 8) this._lastSentences.shift();
+                }
+                return hit;
+            },
+
+            // REPLACE your TTS.onText with this:
+            async onText(payload) {
+                const raw = (payload && (payload.text || payload)) || '';
+                const eos = !!(payload && payload.eos); // explicit sentence end flag (from LLM)
+                const piece = raw.trim();
+                if (!piece) return;
+
+                // Accumulate into carry then extract only full sentences
+                const combined = (this._ingressCarry ? (this._ingressCarry + ' ') : '') + piece;
+                const { complete, rest } = this._splitComplete(combined);
+                this._ingressCarry = rest;
+
+                // Enqueue only completed sentences
+                for (const s of complete) {
+                    if (!this._seenRecently(s)) {
+                        this._textQ.push(s);
+                    }
+                }
+
+                // If explicit EOS (end of sentence/section), flush any remainder as a final sentence
+                if (eos) {
+                    const tail = this._ingressCarry.trim();
+                    if (tail) {
+                        if (!this._seenRecently(tail)) this._textQ.push(tail);
+                    }
+                    this._ingressCarry = '';
+                }
+
+                // Only pump when we actually queued at least one sentence (or EOS flushed one)
+                if (complete.length || eos) {
+                    this._pumpQueue().catch(() => { });
+                }
+            },
+
+
+            async _pumpQueue() {
+                if (this._busy) return;
+                this._busy = true;
+                try {
+                    while (this._textQ.length) {
+                        const nextText = this._textQ.shift();
+                        await this._speakOne(nextText);
+                        // Tiny spacer (30ms) between sentences to avoid click
+                        this.enqueueF32(new Float32Array(Math.round((this._sr || 22050) * 0.03)));
+                    }
+                } finally {
+                    this._busy = false;
+                }
+            },
+
+            async _speakOne(text) {
+                const mode = qs('#ttsMode')?.value || 'stream';
+                const model = (qs('#ttsModel')?.value || CFG.tts.model || '').trim();
+                const viaNkn = CFG.transport === 'nkn';
+                const base = CFG.tts.base;
+                const relay = CFG.tts.relay;
+                const api = CFG.tts.api;
+
+                const a = qs('#ttsAudio');
+                this._underruns = 0;
+                const ur = qs('#ttsUrun'); if (ur) ur.textContent = '0';
+
+                if (mode === 'stream') {
+                    this.setState('streaming…', 'warn');
+                    this.ensureAC(); await this._ac.resume();
+                    // Do NOT clear existing audio queue here — we are concatenating sentences in FIFO.
+
+                    const preroll = Math.round((this._sr || 22050) * 0.04);
+                    if (preroll > 0) this.enqueueF32(new Float32Array(preroll));
+
+                    const req = { text, mode: 'stream', format: 'raw', ...(model ? { model, voice: model } : {}) };
+                    let chunks = 0, bytes = 0;
+                    const ch = qs('#ttsChunks'); const by = qs('#ttsBytes');
+                    let leftover = new Uint8Array(0);
+                    const sinkRate = this._sr || 22050;
+
+                    const handleBytes = (u8) => {
+                        // append and split into even bytes for 16-bit
+                        const merged = new Uint8Array(leftover.length + u8.length);
+                        merged.set(leftover, 0); merged.set(u8, leftover.length);
+                        const even = (merged.length >> 1) << 1;
+                        const body = merged.subarray(0, even);
+                        leftover = merged.subarray(even);
+                        if (!body.length) return;
+
+                        const frames = body.length >> 1;
+                        const dv = new DataView(body.buffer, body.byteOffset, body.length);
+                        const i16 = new Int16Array(frames);
+                        for (let i = 0; i < frames; i++) i16[i] = dv.getInt16(i * 2, true);
+
+                        let f32 = this.int16ToF32(i16);
+                        if (sinkRate !== 22050) f32 = this.resampleLinear(f32, 22050, sinkRate);
+                        this.enqueueF32(f32);
+
+                        chunks++; bytes += u8.length;
+                        if (ch) ch.textContent = String(chunks);
+                        if (by) by.textContent = String(bytes);
+                    };
+
+                    if (viaNkn) {
+                        const spec = {
+                            url: base.replace(/\/+$/, '') + '/speak',
+                            method: 'POST',
+                            headers: Net.auth({ 'X-Relay-Stream': 'chunks' }, api),
+                            json: req,
+                            timeout_ms: 120000
+                        };
+
+                        // robust reordering: derive expected from first seq, dedupe repeats
+                        let expected = null;
+                        const stash = new Map();  // seq -> Uint8Array
+                        const seen = new Set();  // guard against duplicate seq from relay glitches
+
+                        const flush = () => {
+                            while (expected != null && stash.has(expected)) {
+                                const u8 = stash.get(expected);
+                                stash.delete(expected);
+                                handleBytes(u8);
+                                expected++;
+                            }
+                        };
+
+                        await Net.nknStream(spec, relay, {
+                            onBegin: () => { this.setState('stream open', 'warn') },
+                            onChunk: (u8, seqRaw) => {
+                                const seq = (seqRaw | 0);
+                                if (seen.has(seq)) return;     // drop duplicates
+                                seen.add(seq);
+
+                                if (expected == null) {
+                                    // start from the first seq we see
+                                    expected = seq;
+                                }
+
+                                if (seq === expected) {
+                                    handleBytes(u8);
+                                    expected++;
+                                    flush();
+                                } else if (seq > expected) {
+                                    stash.set(seq, u8);
+                                } else {
+                                    // seq < expected: late/duplicate; ignore
+                                }
+                            },
+                            onEnd: () => {
+                                // discard any leftover dangling bytes from this request only
+                                leftover = new Uint8Array(0);
+                                this.setState('ok', 'ok');
+                            }
+                        }, 120000);
+                    }
+                    else {
+                        const r = await fetch(base.replace(/\/+$/, '') + '/speak', {
+                            method: 'POST',
+                            headers: Net.auth({}, api),
+                            body: JSON.stringify(req)
+                        });
+                        if (!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
+
+                        const rd = r.body.getReader();
+                        let httpLeftover = new Uint8Array(0);
+                        while (true) {
+                            const { value, done } = await rd.read();
+                            if (done) break;
+                            if (!value || !value.byteLength) continue;
+
+                            const merged = new Uint8Array(httpLeftover.length + value.length);
+                            merged.set(httpLeftover, 0); merged.set(value, httpLeftover.length);
+                            const even = (merged.length >> 1) << 1;
+                            if (even) {
+                                handleBytes(merged.subarray(0, even));
+                                httpLeftover = merged.subarray(even);
+                            } else {
+                                httpLeftover = merged;
+                            }
+                        }
+                        httpLeftover = new Uint8Array(0);
+                        this.setState('ok', 'ok');
+                    }
+
+                    if (a) a.src = ''; // streaming via WebAudio
+                    const tm = qs('#ttsMeta'); if (tm) tm.textContent = `live pcm 16-bit mono 22050Hz → ${sinkRate}Hz`;
+
+                } else {
+                    this.setState('synth…', 'warn');
+                    try {
+                        const data = await Net.postJSON(
+                            base, '/speak',
+                            { text, mode: 'file', format: 'ogg', ...(model ? { model, voice: model } : {}) },
+                            api, CFG.transport === 'nkn', CFG.tts.relay, 10 * 60 * 1000
+                        );
+                        let blob = null, mime = 'audio/ogg';
+                        if (data?.files?.[0]?.url) {
+                            const fileUrl = base.replace(/\/+$/, '') + data.files[0].url;
+                            blob = await Net.fetchBlob(fileUrl, CFG.transport === 'nkn', CFG.tts.relay, api);
+                            mime = blob.type || mime;
+                        } else if (data?.audio_b64) {
+                            const u8 = b64ToBytes(data.audio_b64);
+                            blob = new Blob([u8], { type: mime });
+                        } else {
+                            throw new Error('no audio');
+                        }
+
+                        if (a) { const url = URL.createObjectURL(blob); a.src = url; a.play().catch(() => { }); }
+                        const tm = qs('#ttsMeta'); if (tm) tm.textContent = `${mime} • ${(blob.size / 1024).toFixed(1)} KB`;
+                        this.setState('ok', 'ok');
+                    } catch (e) {
+                        this.setState('error', 'err'); log('[tts] ' + e.message);
+                    }
+                }
+            }
+        };
+
+        /* ======== boot / bindings ======== */
+        function bindUI() {
+            // global
+            const tr = qs('#transport'); if (tr) { tr.value = CFG.transport; tr.addEventListener('change', e => { CFG.transport = e.target.value; saveCFG(); if (CFG.transport === 'nkn') Net.ensureNkn(); setBadge('Saved') }) }
+            const c1 = qs('#nknConnect'); if (c1) c1.addEventListener('click', () => Net.ensureNkn());
+            const c2 = qs('#nknDisconnect'); if (c2) c2.addEventListener('click', () => { try { Net.nkn.client && Net.nkn.client.close() } catch { } Net.nkn.client = null; Net.nkn.ready = false; const i = qs('#nknInfo'); if (i) i.textContent = 'disconnected'; setBadge('NKN off') });
+            const sv = qs('#saveAll'); if (sv) sv.addEventListener('click', () => { saveCFG(); setBadge('Saved') });
+
+            // ASR inputs
+            if (qs('#asrBase')) qs('#asrBase').value = CFG.asr.base; if (qs('#asrRelay')) qs('#asrRelay').value = CFG.asr.relay; if (qs('#asrApi')) qs('#asrApi').value = CFG.asr.api;
+            if (qs('#asrRate')) qs('#asrRate').value = CFG.asr.rate; if (qs('#asrChunk')) qs('#asrChunk').value = CFG.asr.chunk; if (qs('#asrLive')) qs('#asrLive').value = String(!!CFG.asr.live);
+            if (qs('#asrRms')) qs('#asrRms').value = CFG.asr.rms; if (qs('#asrHold')) qs('#asrHold').value = CFG.asr.hold; if (qs('#asrEmaMs')) qs('#asrEmaMs').value = CFG.asr.emaMs;
+            if (qs('#asrPhraseOn')) qs('#asrPhraseOn').value = String(!!CFG.asr.phraseOn); if (qs('#asrPhraseMin')) qs('#asrPhraseMin').value = CFG.asr.phraseMin; if (qs('#asrPhraseStable')) qs('#asrPhraseStable').value = CFG.asr.phraseStable;
+            if (qs('#asrSilence')) qs('#asrSilence').value = CFG.asr.silence;
+            if (qs('#asrPrompt')) qs('#asrPrompt').value = CFG.asr.prompt || '';  // NEW
+
+            // change handler:
+            qsa('#asrCard input, #asrCard select, #asrCard textarea').forEach(el => el.addEventListener('change', () => {
+                CFG.asr.base = qs('#asrBase')?.value.trim() || CFG.asr.base; CFG.asr.relay = qs('#asrRelay')?.value.trim() || ''; CFG.asr.api = qs('#asrApi')?.value.trim() || '';
+                CFG.asr.rate = parseInt(qs('#asrRate')?.value || '16000', 10) || 16000; CFG.asr.chunk = parseInt(qs('#asrChunk')?.value || '120', 10) || 120;
+                CFG.asr.live = (qs('#asrLive')?.value) === 'true';
+                CFG.asr.rms = parseFloat(qs('#asrRms')?.value || '0.015') || 0.015; CFG.asr.hold = parseInt(qs('#asrHold')?.value || '250', 10) || 250; CFG.asr.emaMs = parseInt(qs('#asrEmaMs')?.value || '120', 10) || 120;
+                CFG.asr.silence = parseInt(qs('#asrSilence')?.value || '900', 10) || 900;
+                CFG.asr.phraseOn = (qs('#asrPhraseOn')?.value) === 'true'; CFG.asr.phraseMin = parseInt(qs('#asrPhraseMin')?.value || '3', 10) || 3; CFG.asr.phraseStable = parseInt(qs('#asrPhraseStable')?.value || '350', 10) || 350;
+                CFG.asr.prompt = (qs('#asrPrompt')?.value || '').trim(); // NEW
+                saveCFG(); setBadge('Saved')
+            }));
+            const ab = qs('#asrStart'); if (ab) ab.addEventListener('click', () => ASR.start());
+            const as = qs('#asrStop'); if (as) as.addEventListener('click', () => ASR.stop());
+
+            // LLM inputs
+            if (qs('#llmBase')) qs('#llmBase').value = CFG.llm.base; if (qs('#llmRelay')) qs('#llmRelay').value = CFG.llm.relay; if (qs('#llmApi')) qs('#llmApi').value = CFG.llm.api;
+            if (qs('#llmStream')) qs('#llmStream').value = String(!!CFG.llm.stream);
+            qsa('#llmCard input, #llmCard select').forEach(el => el.addEventListener('change', () => {
+                CFG.llm.base = qs('#llmBase')?.value.trim() || CFG.llm.base; CFG.llm.relay = qs('#llmRelay')?.value.trim() || ''; CFG.llm.api = qs('#llmApi')?.value.trim() || '';
+                CFG.llm.model = qs('#llmModel')?.value || CFG.llm.model; CFG.llm.stream = (qs('#llmStream')?.value) === 'true'; saveCFG();
+            }));
+            const lr = qs('#llmRefresh'); if (lr) lr.addEventListener('click', () => LLM.refreshModels());
+
+            // TTS inputs + voices
+            if (qs('#ttsBase')) qs('#ttsBase').value = CFG.tts.base; if (qs('#ttsRelay')) qs('#ttsRelay').value = CFG.tts.relay; if (qs('#ttsApi')) qs('#ttsApi').value = CFG.tts.api;
+            if (qs('#ttsModel')) qs('#ttsModel').value = CFG.tts.model || ''; if (qs('#ttsMode')) qs('#ttsMode').value = CFG.tts.mode || 'stream';
+            qsa('#ttsCard input, #ttsCard select').forEach(el => el.addEventListener('change', () => {
+                CFG.tts.base = qs('#ttsBase')?.value.trim() || CFG.tts.base; CFG.tts.relay = qs('#ttsRelay')?.value.trim() || ''; CFG.tts.api = qs('#ttsApi')?.value.trim() || '';
+                CFG.tts.model = qs('#ttsModel')?.value.trim() || ''; CFG.tts.mode = qs('#ttsMode')?.value || 'stream'; saveCFG();
+            }));
+            const trf = qs('#ttsRefresh'); if (trf) trf.addEventListener('click', () => TTS.refreshModels());
+
+            // wires
+            const state = qs('#wireState'); if (state) state.textContent = CFG.wireMode ? 'ON' : 'OFF';
+            const wt = qs('#wireToggle'); if (wt) wt.addEventListener('click', () => { CFG.wireMode = !CFG.wireMode; if (state) state.textContent = CFG.wireMode ? 'ON' : 'OFF'; saveCFG() });
+            const cw = qs('#clearWires'); if (cw) cw.addEventListener('click', () => Router.clear());
         }
-      }else{
-        const data=await Net.postJSON(base,'/api/chat',{model,messages:[{role:'user',content:text}],stream:false},api,viaNkn,relay,120000);
-        full=(data?.message?.content)||(data?.response)||'';
-        tok=(full.match(/\S+/g)||[]).length; bytes=full.length; upd();
-        out.textContent=full; this.setState('done','ok');
-      }
-      Router.send('llm:final',{type:'text',text:full});
-    }catch(e){ this.setState('error','err'); log('[llm] '+e.message) }
-  }
-};
-
-/* ======== TTS (streams PCM; shows state) ======== */
-const TTS={
-  models:[], lastOk:0, timer:null, slow:180000, fast:30000,
-  async refreshModels(){
-    try{
-      const data=await Net.getJSON(CFG.tts.base,'/models',CFG.tts.api,CFG.transport==='nkn',CFG.tts.relay);
-      const arr=(data.models||[]).map(m=>m.name||m.model).filter(Boolean);
-      const dl=qs('#ttsModelList'); dl.innerHTML=''; arr.forEach(n=>{const o=document.createElement('option');o.value=n; dl.appendChild(o)});
-      this.models=arr; if(arr.length){ this.lastOk=Date.now(); CFG.tts.model=(CFG.tts.model&&arr.includes(CFG.tts.model))?CFG.tts.model:arr[0]; qs('#ttsModel').value=CFG.tts.model; saveCFG(); log('[tts] voices ok') }
-      else log('[tts] no voices');
-    }catch(e){ log('[tts] models '+e.message) }
-    finally{ clearTimeout(this.timer); const have=this.models.length>0; this.timer=setTimeout(()=>this.refreshModels(), have?this.slow:this.fast); }
-  },
-  setState(txt,cls='ok'){ qs('#ttsState').textContent=txt; qs('#ttsDot').className='dot '+(cls==='ok'?'ok':cls==='err'?'err':'warn') },
-
-  _ac:null,_node:null,_q:[],_queued:0,_underruns:0,_sr:22050,
-  ensureAC(){
-    if(this._ac) return this._ac;
-    this._ac=new (window.AudioContext||window.webkitAudioContext)({sampleRate:22050});
-    this._sr=this._ac.sampleRate||22050; qs('#ttsAC').textContent=this._sr+'Hz';
-    const n=this._node=this._ac.createScriptProcessor(4096,1,1);
-    n.onaudioprocess=(e)=>{
-      const out=e.outputBuffer.getChannelData(0);
-      if(!this._q.length){ out.fill(0); this._underruns++; qs('#ttsUrun').textContent=String(this._underruns); return }
-      let need=out.length, off=0;
-      while(need>0){
-        if(!this._q.length){ out.fill(0,off); this._underruns++; qs('#ttsUrun').textContent=String(this._underruns); break }
-        const head=this._q[0]; const take=Math.min(need, head.length);
-        out.set(head.subarray(0,take), off);
-        if(take===head.length) this._q.shift(); else this._q[0]=head.subarray(take);
-        this._queued -= take; off += take; need -= take;
-      }
-      qs('#ttsBuf').textContent=String(this._queued);
-      qs('#ttsBufMs').textContent=String(Math.round(this._queued/this._sr*1000));
-    };
-    n.connect(this._ac.destination);
-    return this._ac;
-  },
-  int16ToF32(int16){ const f=new Float32Array(int16.length); for(let i=0;i<int16.length;i++) f[i]=Math.max(-1,Math.min(1,int16[i]/32768)); return f },
-  enqueueF32(f){ this._q.push(f); this._queued += f.length; qs('#ttsBuf').textContent=String(this._queued); qs('#ttsBufMs').textContent=String(Math.round(this._queued/this._sr*1000)); },
-
-  async onText(payload){
-    const text=(payload && (payload.text||payload)) || '';
-    if(!text.trim()) return;
-    const mode=qs('#ttsMode').value || 'stream';
-    const model=qs('#ttsModel').value.trim() || CFG.tts.model || '';
-    const viaNkn=CFG.transport==='nkn', base=CFG.tts.base, relay=CFG.tts.relay, api=CFG.tts.api;
-    const a=qs('#ttsAudio'); this._underruns=0; qs('#ttsUrun').textContent='0'; qs('#ttsBytes').textContent='0'; qs('#ttsChunks').textContent='0';
-
-    if(mode==='stream'){
-      this.setState('streaming…','warn');
-      this.ensureAC(); await this._ac.resume();
-      this._q.length=0; this._queued=0;
-      const req={ text, mode:'stream', format:'raw', ...(model?{model}:{}) };
-      let chunks=0, bytes=0;
-
-      const handlePCM=(u8)=>{
-        const wholeFrames=Math.floor(u8.length/2); if(!wholeFrames) return;
-        const dv=new DataView(u8.buffer, u8.byteOffset, wholeFrames*2);
-        const int16=new Int16Array(wholeFrames); for(let i=0;i<wholeFrames;i++) int16[i]=dv.getInt16(i*2,true);
-        const f32=this.int16ToF32(int16); this.enqueueF32(f32);
-        chunks++; bytes+=u8.length; qs('#ttsChunks').textContent=String(chunks); qs('#ttsBytes').textContent=String(bytes);
-      };
-
-      if(viaNkn){
-        const spec={ url:base.replace(/\/+$/,'')+'/speak', method:'POST', headers:Net.auth({'X-Relay-Stream':'chunks'},api), json:req, timeout_ms:120000 };
-        await Net.nknStream(spec, relay, {
-          onBegin:()=>this.setState('stream open','warn'),
-          onChunk:(u8)=>handlePCM(u8),
-          onEnd:()=>this.setState('ok','ok')
-        }, 120000);
-      }else{
-        const r=await fetch(base.replace(/\/+$/,'')+'/speak',{method:'POST',headers:Net.auth({},api),body:JSON.stringify(req)});
-        if(!r.ok||!r.body) throw new Error(`${r.status} ${r.statusText}`);
-        const rd=r.body.getReader(); let leftover=new Uint8Array(0);
-        while(true){ const {value,done}=await rd.read(); if(done) break; if(!value||!value.byteLength) continue;
-          const merged=new Uint8Array(leftover.length+value.length); merged.set(leftover,0); merged.set(value,leftover.length);
-          const even=(merged.length>>1)<<1; if(even){ handlePCM(merged.subarray(0,even)); leftover=merged.subarray(even); } else { leftover=merged; }
+        function bindPorts() {
+            Router.register('asr:partial', qsa('[data-port="asr:partial"]')[0], () => { });
+            Router.register('asr:phrase', qsa('[data-port="asr:phrase"]')[0], (p) => LLM.onPrompt(p));
+            Router.register('asr:final', qsa('[data-port="asr:final"]')[0], (p) => LLM.onPrompt(p));
+            Router.register('llm:prompt', qsa('[data-port="llm:prompt"]')[0], (p) => LLM.onPrompt(p));
+            Router.register('llm:delta', qsa('[data-port="llm:delta"]')[0], () => { });
+            // keep existing wire behaviour; TTS also receives per-sentence directly from LLM via Router.send('tts:text', …)
+            Router.register('llm:final', qsa('[data-port="llm:final"]')[0], (p) => TTS.onText(p));
+            Router.register('tts:text', qsa('[data-port="tts:text"]')[0], (p) => TTS.onText(p));
+            Router.render();
         }
-        leftover=new Uint8Array(0);
-        this.setState('ok','ok');
-      }
-      a.src=''; // streaming via WebAudio, not <audio>
-      qs('#ttsMeta').textContent='live pcm 16-bit mono 22050Hz';
-      log('[tts] stream done');
-    }else{
-      this.setState('synth…','warn');
-      try{
-        const data=await Net.postJSON(base,'/speak',{ text, mode:'file', format:'ogg', ...(model?{model}:{}) },api,viaNkn,relay,10*60*1000);
-        let blob=null, mime='audio/ogg';
-        if(data?.files?.[0]?.url){
-          const fileUrl=base.replace(/\/+$/,'') + data.files[0].url;
-          blob = await Net.fetchBlob(fileUrl, viaNkn, relay, api);
-          mime = blob.type || mime;
-        }else if(data?.audio_b64){ const u8=b64ToBytes(data.audio_b64); blob=new Blob([u8],{type:mime}); }
-        else throw new Error('no audio');
 
-        const url=URL.createObjectURL(blob); a.src=url; a.play().catch(()=>{});
-        qs('#ttsMeta').textContent=`${mime} • ${(blob.size/1024).toFixed(1)} KB`;
-        this.setState('ok','ok');
-      }catch(e){ this.setState('error','err'); log('[tts] '+e.message) }
-    }
-  }
-};
+        /* boot */
+        function init() {
+            bindUI(); bindPorts();
+            if (CFG.transport === 'nkn') Net.ensureNkn();
+            setBadge('Ready');
+            LLM.refreshModels();
+            TTS.refreshModels();
+            const wb = qs('#wiresBox'); if (wb) wb.textContent = CFG.wires.length ? CFG.wires.map((w, i) => `${i + 1}. ${w.from} → ${w.to}`).join('\n') : '(no wires)';
+        }
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
 
-/* ======== boot / bindings ======== */
-function bindUI(){
-  // global
-  qs('#transport').value=CFG.transport;
-  qs('#transport').addEventListener('change',e=>{ CFG.transport=e.target.value; saveCFG(); if(CFG.transport==='nkn') Net.ensureNkn(); setBadge('Saved') });
-  qs('#nknConnect').addEventListener('click',()=>Net.ensureNkn());
-  qs('#nknDisconnect').addEventListener('click',()=>{ try{Net.nkn.client&&Net.nkn.client.close()}catch{} Net.nkn.client=null; Net.nkn.ready=false; qs('#nknInfo').textContent='disconnected'; setBadge('NKN off') });
-  qs('#saveAll').addEventListener('click',()=>{ saveCFG(); setBadge('Saved') });
-
-  // ASR inputs
-  qs('#asrBase').value=CFG.asr.base; qs('#asrRelay').value=CFG.asr.relay; qs('#asrApi').value=CFG.asr.api;
-  qs('#asrRate').value=CFG.asr.rate; qs('#asrChunk').value=CFG.asr.chunk; qs('#asrLive').value=String(!!CFG.asr.live);
-  qs('#asrRms').value=CFG.asr.rms; qs('#asrSilence').value=CFG.asr.silence;
-  qsa('#asrCard input, #asrCard select').forEach(el=>el.addEventListener('change',()=>{
-    CFG.asr.base=qs('#asrBase').value.trim(); CFG.asr.relay=qs('#asrRelay').value.trim(); CFG.asr.api=qs('#asrApi').value.trim();
-    CFG.asr.rate=parseInt(qs('#asrRate').value||'16000',10)||16000; CFG.asr.chunk=parseInt(qs('#asrChunk').value||'120',10)||120;
-    CFG.asr.live=qs('#asrLive').value==='true'; CFG.asr.rms=parseFloat(qs('#asrRms').value||'0.015')||0.015; CFG.asr.silence=parseInt(qs('#asrSilence').value||'900',10)||900; saveCFG();
-  }));
-  qs('#asrStart').addEventListener('click',()=>ASR.start());
-  qs('#asrStop').addEventListener('click',()=>ASR.stop());
-
-  // LLM inputs
-  qs('#llmBase').value=CFG.llm.base; qs('#llmRelay').value=CFG.llm.relay; qs('#llmApi').value=CFG.llm.api;
-  qs('#llmStream').value=String(!!CFG.llm.stream);
-  qsa('#llmCard input, #llmCard select').forEach(el=>el.addEventListener('change',()=>{
-    CFG.llm.base=qs('#llmBase').value.trim(); CFG.llm.relay=qs('#llmRelay').value.trim(); CFG.llm.api=qs('#llmApi').value.trim();
-    CFG.llm.model=qs('#llmModel').value; CFG.llm.stream=qs('#llmStream').value==='true'; saveCFG();
-  }));
-  qs('#llmRefresh').addEventListener('click',()=>LLM.refreshModels());
-
-  // TTS inputs + auto-populate voices
-  qs('#ttsBase').value=CFG.tts.base; qs('#ttsRelay').value=CFG.tts.relay; qs('#ttsApi').value=CFG.tts.api;
-  qs('#ttsModel').value=CFG.tts.model||''; qs('#ttsMode').value=CFG.tts.mode||'stream';
-  qsa('#ttsCard input, #ttsCard select').forEach(el=>el.addEventListener('change',()=>{
-    CFG.tts.base=qs('#ttsBase').value.trim(); CFG.tts.relay=qs('#ttsRelay').value.trim(); CFG.tts.api=qs('#ttsApi').value.trim();
-    CFG.tts.model=qs('#ttsModel').value.trim(); CFG.tts.mode=qs('#ttsMode').value; saveCFG();
-  }));
-  qs('#ttsRefresh').addEventListener('click',()=>TTS.refreshModels());
-
-  // wires
-  const state=qs('#wireState'); state.textContent=CFG.wireMode?'ON':'OFF';
-  qs('#wireToggle').addEventListener('click',()=>{ CFG.wireMode=!CFG.wireMode; state.textContent=CFG.wireMode?'ON':'OFF'; saveCFG() });
-  qs('#clearWires').addEventListener('click',()=>Router.clear());
-}
-function bindPorts(){
-  Router.register('asr:partial', qsa('[data-port="asr:partial"]')[0], ()=>{});
-  Router.register('asr:final',   qsa('[data-port="asr:final"]')[0],   (p)=>LLM.onPrompt(p));
-  Router.register('llm:prompt',  qsa('[data-port="llm:prompt"]')[0],  (p)=>LLM.onPrompt(p));
-  Router.register('llm:delta',   qsa('[data-port="llm:delta"]')[0],   ()=>{});
-  Router.register('llm:final',   qsa('[data-port="llm:final"]')[0],   (p)=>TTS.onText(p));
-  Router.register('tts:text',    qsa('[data-port="tts:text"]')[0],    (p)=>TTS.onText(p));
-  Router.render();
-}
-
-/* boot */
-function init(){
-  bindUI(); bindPorts();
-  if(CFG.transport==='nkn') Net.ensureNkn();
-  setBadge('Ready');
-  LLM.refreshModels();
-  TTS.refreshModels();  // auto-populate TTS voices
-  qs('#wiresBox').textContent = CFG.wires.length? CFG.wires.map((w,i)=>`${i+1}. ${w.from} → ${w.to}`).join('\n') : '(no wires)';
-}
-document.addEventListener('DOMContentLoaded', init);
-</script>
 </body>
+
 </html>
