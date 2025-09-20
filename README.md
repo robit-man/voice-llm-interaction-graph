@@ -32,6 +32,7 @@ All pages speak to backends over either **HTTP(S)** or **NKN Relay (DM)** and **
 ```bash
 git clone https://github.com/robit-man/voice-llm-interaction-graph.git && cd voice-llm-interaction-graph && python3 -u server.py
 ```
+then ctrl + click the link generated in console, otherwise, proceed with the following command list.
 
 1. **Serve the static files** (any static host works):
 
