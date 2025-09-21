@@ -59,9 +59,6 @@
         .logo {
             width: 36px;
             height: 36px;
-            border-radius: 12px;
-            background: conic-gradient(from 220deg, var(--accent), #9f78ff, var(--accent2));
-            box-shadow: var(--shadow)
         }
 
         h1 {
@@ -134,6 +131,10 @@
         h2 {
             margin: 0 0 8px;
             font-size: 15px
+        }
+
+        .isHidden {
+            display: none !important;
         }
 
         .row {
@@ -269,6 +270,195 @@
             font-family: var(--mono);
             font-size: 12px
         }
+
+        /* Workspace */
+        #workspaceWrap {
+            position: relative;
+            height: 520px;
+            border-radius: var(--r);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, .12);
+            background:
+                linear-gradient(var(--panel2), var(--panel2)),
+                repeating-linear-gradient(0deg, transparent 0 28px, rgba(255, 255, 255, .06) 28px 29px),
+                repeating-linear-gradient(90deg, transparent 0 28px, rgba(255, 255, 255, .06) 28px 29px);
+        }
+
+        #workspace {
+            position: absolute;
+            inset: 0;
+        }
+
+        #workspace .isHidden {
+            display: none;
+        }
+
+        #linksSvg {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        /* Node */
+        .node {
+            position: absolute;
+            min-width: 220px;
+            background: rgba(255, 255, 255, .08);
+            border: 1px solid rgba(255, 255, 255, .18);
+            border-radius: 14px;
+            box-shadow: var(--shadow);
+            user-select: none;
+        }
+
+        .node .head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 8px 10px;
+            cursor: grab;
+            background: rgba(0, 0, 0, .15);
+            border-bottom: 1px solid rgba(255, 255, 255, .12);
+            border-top-left-radius: 14px;
+            border-top-right-radius: 14px;
+        }
+
+        .node .head:active {
+            cursor: grabbing;
+        }
+
+        .node .title {
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .node .gear {
+            width: 24px;
+            height: 24px;
+            border-radius: 8px;
+            padding: 0;
+            line-height: 24px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: 1px solid rgba(255, 255, 255, .25);
+            color: var(--text);
+        }
+
+        .node .gear:hover {
+            background: rgba(255, 255, 255, .08);
+        }
+
+        .node .body {
+            padding: 10px;
+        }
+
+        .node .ports {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .node .side {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .right>.wp-port {
+
+            justify-content: flex-end;
+
+        }
+
+        .wp-port {
+            --sz: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--mono);
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .wp-port .dot {
+            width: var(--sz);
+            height: var(--sz);
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, .8);
+            background: rgba(255, 255, 255, .15);
+        }
+
+        .wp-port.out .dot {
+            box-shadow: 0 0 0 2px rgba(102, 224, 255, .25);
+        }
+
+        .wp-port.in .dot {
+            box-shadow: 0 0 0 2px rgba(168, 255, 96, .25);
+        }
+
+        .wp-port.sel .dot {
+            background: var(--accent);
+        }
+
+        /* Modal */
+        .modal.hidden {
+            display: none;
+        }
+
+        .modal {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+        }
+
+        .modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(0, 0, 0, .5);
+            backdrop-filter: blur(2px);
+        }
+
+        .modal-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: min(880px, calc(100% - 28px));
+            /* wider to fit full card */
+            background: var(--panel);
+            border: 1px solid rgba(255, 255, 255, .18);
+            border-radius: 16px;
+            padding: 14px;
+            max-height: calc(100vh - 80px);
+            /* allow scrolling */
+            overflow: auto;
+        }
+
+        /* When a card is shown inside the modal, let it stretch naturally */
+        .modal-panel .card {
+            grid-column: auto;
+            margin: 0;
+        }
+
+        /* Tiny VU in nodes */
+        .node .vu {
+            height: 6px;
+        }
+
+
+        .modal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .modal-title {
+            font-weight: 800;
+            font-size: 15px;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/nkn-sdk@1.3.6/dist/nkn.min.js"></script>
 </head>
@@ -276,10 +466,16 @@
 <body>
     <header>
         <div class="brand">
-            <div class="logo"></div>
+            <div class="logo">
+                <svg xmlns="http://www.w3.org/2000/svg" width="2rem" height="2rem" viewBox="0 0 24 24" fill="none">
+                    <path
+                        d="M8 6.5H16M7.70502 8.70919L12.2826 15.3034M4.6 9H6.4C6.96005 9 7.24008 9 7.45399 8.89101C7.64215 8.79513 7.79513 8.64215 7.89101 8.45399C8 8.24008 8 7.96005 8 7.4V5.6C8 5.03995 8 4.75992 7.89101 4.54601C7.79513 4.35785 7.64215 4.20487 7.45399 4.10899C7.24008 4 6.96005 4 6.4 4H4.6C4.03995 4 3.75992 4 3.54601 4.10899C3.35785 4.20487 3.20487 4.35785 3.10899 4.54601C3 4.75992 3 5.03995 3 5.6V7.4C3 7.96005 3 8.24008 3.10899 8.45399C3.20487 8.64215 3.35785 8.79513 3.54601 8.89101C3.75992 9 4.03995 9 4.6 9ZM13.6 20H15.4C15.9601 20 16.2401 20 16.454 19.891C16.6422 19.7951 16.7951 19.6422 16.891 19.454C17 19.2401 17 18.9601 17 18.4V16.6C17 16.0399 17 15.7599 16.891 15.546C16.7951 15.3578 16.6422 15.2049 16.454 15.109C16.2401 15 15.9601 15 15.4 15H13.6C13.0399 15 12.7599 15 12.546 15.109C12.3578 15.2049 12.2049 15.3578 12.109 15.546C12 15.7599 12 16.0399 12 16.6V18.4C12 18.9601 12 19.2401 12.109 19.454C12.2049 19.6422 12.3578 19.7951 12.546 19.891C12.7599 20 13.0399 20 13.6 20ZM17.6 9H19.4C19.9601 9 20.2401 9 20.454 8.89101C20.6422 8.79513 20.7951 8.64215 20.891 8.45399C21 8.24008 21 7.96005 21 7.4V5.6C21 5.03995 21 4.75992 20.891 4.54601C20.7951 4.35785 20.6422 4.20487 20.454 4.10899C20.2401 4 19.9601 4 19.4 4H17.6C17.0399 4 16.7599 4 16.546 4.10899C16.3578 4.20487 16.2049 4.35785 16.109 4.54601C16 4.75992 16 5.03995 16 5.6V7.4C16 7.96005 16 8.24008 16.109 8.45399C16.2049 8.64215 16.3578 8.79513 16.546 8.89101C16.7599 9 17.0399 9 17.6 9Z"
+                        stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+            </div>
             <div>
-                <h1>Realtime Graph</h1>
-                <div class="hint">ASR → LLM → TTS · HTTP or NKN · streaming phrases + smoothed VAD</div>
+                <h1>Inference Graph Playground</h1>
+                <div class="hint">ASR → LLM → TTS · HTTP or NKN Endpoints</div>
             </div>
         </div>
         <div id="status" class="badge"><span class="dot warn"></span><span>Booting…</span></div>
@@ -302,6 +498,23 @@
             </div>
         </section>
 
+        <!-- GRAPH WORKSPACE -->
+        <section class="card span-12" id="graphCard">
+            <h2>Graph Workspace</h2>
+            <div class="row" style="margin-bottom:10px;">
+                <button id="addASR">+ ASR</button>
+                <button id="addLLM" class="secondary">+ LLM</button>
+                <button id="addTTS" class="ghost">+ TTS</button>
+                <button id="exportGraph" class="ghost">Export</button>
+                <button id="importGraph" class="ghost">Import</button>
+                <span class="muted">Drag nodes, click an output port then an input port to link.</span>
+            </div>
+
+            <div id="workspaceWrap">
+                <svg id="linksSvg" width="100%" height="100%" preserveAspectRatio="none"></svg>
+                <div id="workspace"></div>
+            </div>
+        </section>
         <!-- ASR -->
         <section class="card span-4" id="asrCard">
             <h2>ASR</h2>
@@ -440,6 +653,7 @@
 
             <div class="row" style="margin-top:6px;">
                 <span class="port" data-port="llm:prompt">in · prompt</span>
+                <span class="port" data-port="llm:system">in · system</span> <!-- ⬅️ NEW -->
                 <span class="port" data-port="llm:delta">out · delta</span>
                 <span class="port" data-port="llm:final">out · final</span>
                 <!-- optional, if you want to listen for memory updates you already emit -->
@@ -501,6 +715,28 @@
         </section>
     </main>
 
+
+    <!-- SETTINGS MODAL -->
+    <div id="settingsModal" class="modal hidden">
+        <div class="modal-backdrop"></div>
+        <div class="modal-panel">
+            <div class="modal-head">
+                <div class="modal-title">Node Settings</div>
+                <button class="ghost" id="closeSettings">✕</button>
+            </div>
+
+            <!-- The full ASR/LLM/TTS card will be moved here while editing -->
+            <div id="settingsSlot"></div>
+
+            <div class="row" style="margin-top:12px;">
+                <button id="saveSettings">Save to Node</button>
+                <button class="ghost" id="cancelSettings" type="button">Close</button>
+                <span class="muted" id="settingsHint">—</span>
+            </div>
+        </div>
+    </div>
+
+
     <script>
         // --- Anti-signoff defaults ---
         const ASR_DEFAULT_PROMPT =
@@ -544,6 +780,60 @@
 
         function saveCFG() { LS.set('graph.cfg', CFG) }
 
+        // --- Simple service status dots
+        const Status = {
+            _t: null,
+            setDot(id, level /* 'ok' | 'warn' | 'err' */) {
+                const d = qs('#' + id);
+                if (!d) return;
+                d.className = 'dot ' + (level || 'err');
+            },
+            tickNkn() {
+                // green when connected; yellow while trying; red when not in NKN mode
+                if (CFG.transport === 'nkn') {
+                    this.setDot('nknDot', Net.nkn.ready ? 'ok' : 'warn');
+                } else {
+                    this.setDot('nknDot', 'err');
+                }
+            },
+            async pingASR() {
+                try {
+                    const viaNkn = CFG.transport === 'nkn';
+                    const h = await Net.getJSON(CFG.asr.base, '/health', CFG.asr.api, viaNkn, CFG.asr.relay);
+                    // ok if reachable; warn if models list is empty
+                    const modelsOk = !!(h && h.models && (h.models.full || h.models.preview_fast || h.models.preview_accurate));
+                    this.setDot('asrSvcDot', modelsOk ? 'ok' : 'warn');
+                } catch { this.setDot('asrSvcDot', 'err'); }
+            },
+            async pingLLM() {
+                try {
+                    const viaNkn = CFG.transport === 'nkn';
+                    const r = await Net.getJSON(CFG.llm.base, '/api/tags', CFG.llm.api, viaNkn, CFG.llm.relay);
+                    const arr = (r?.models || []).map(m => m.name || m.model).filter(Boolean);
+                    this.setDot('llmSvcDot', arr.length ? 'ok' : 'warn');
+                } catch { this.setDot('llmSvcDot', 'err'); }
+            },
+            async pingTTS() {
+                try {
+                    const viaNkn = CFG.transport === 'nkn';
+                    // try common endpoints
+                    let ok = false;
+                    try {
+                        const v = await Net.getJSON(CFG.tts.base, '/voices', CFG.tts.api, viaNkn, CFG.tts.relay);
+                        ok = Array.isArray(v) ? v.length > 0 : Array.isArray(v?.voices) ? v.voices.length > 0 : false;
+                    } catch { /* fall through to /models */ }
+                    if (!ok) {
+                        const m = await Net.getJSON(CFG.tts.base, '/models', CFG.tts.api, viaNkn, CFG.tts.relay);
+                        ok = Array.isArray(m) ? m.length > 0 : Array.isArray(m?.models) ? m.models.length > 0 : false;
+                    }
+                    this.setDot('ttsSvcDot', ok ? 'ok' : 'warn');
+                } catch { this.setDot('ttsSvcDot', 'err'); }
+            },
+
+            refresh() { this.tickNkn(); this.pingASR(); this.pingLLM(); this.pingTTS(); },
+            start() { this.ensureBar(); this.refresh(); clearInterval(this._t); this._t = setInterval(() => this.refresh(), 15000); }
+        };
+
         /* ======== network (http+nkn) ======== */
         const Net = {
             nkn: { client: null, ready: false, addr: '', pend: new Map(), streams: new Map() },
@@ -578,13 +868,15 @@
                 if (!useNkn) { const r = await fetch(fullUrl, { headers: this.auth({}, api) }); if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.blob() }
                 return this.nknFetchBlob(fullUrl, relay, api)
             },
+
+
             ensureNkn() {
                 if (CFG.transport !== 'nkn') return;
                 if (this.nkn.client) return;
                 if (!window.nkn || !window.nkn.MultiClient) { setBadge('nkn-sdk missing', false); return }
                 const c = new window.nkn.MultiClient({ identifier: 'graph', numSubClients: 4, wsConnHeartbeatTimeout: 60000 }); this.nkn.client = c;
-                c.on('connect', () => { this.nkn.ready = true; this.nkn.addr = c.addr || ''; const i = qs('#nknInfo'); if (i) i.textContent = `connected • ${this.nkn.addr.slice(0, 10)}…`; setBadge('NKN ready') });
-                c.on('close', () => { this.nkn.ready = false; const i = qs('#nknInfo'); if (i) i.textContent = 'connecting…' });
+                c.on('connect', () => { this.nkn.ready = true; this.nkn.addr = c.addr || ''; const i = qs('#nknInfo'); if (i) i.textContent = `connected • ${this.nkn.addr.slice(0, 10)}…`; setBadge('NKN ready'); Status.tickNkn && Status.tickNkn(); });
+                c.on('close', () => { this.nkn.ready = false; const i = qs('#nknInfo'); if (i) i.textContent = 'connecting…'; Status.tickNkn && Status.tickNkn(); });
 
                 c.on('message', (a, b) => {
                     let p = (a && typeof a === 'object' && a.payload !== undefined) ? a.payload : b;
@@ -674,12 +966,48 @@
                 });
                 return new Blob(parts, { type: ctype })
             }
+
         };
 
         /* ======== wiring ======== */
         const Router = {
             ports: new Map(), wires: CFG.wires.slice(), sel: null,
-            register(key, el, onrecv) { if (!el) return; this.ports.set(key, { el, onrecv }); el.addEventListener('click', () => { if (!CFG.wireMode) return; if (!this.sel) { this.sel = key; el.classList.add('sel'); return } const from = this.sel; this.clearSel(); if (from === key) return; if (!this.wires.find(w => w.from === from && w.to === key)) { this.wires.push({ from, to: key }); CFG.wires = this.wires.slice(); saveCFG(); this.render(); log(`wired ${from} → ${key}`) } }) },
+            register(key, el, onrecv) {
+                // always keep the original
+                this.ports.set(key, { el, onrecv });
+
+                // if key looks like "type:id:port", also register "id:in:port"
+                const m = /^([a-z]+):([^:]+):(.+)$/.exec(key);
+                if (m) {
+                    const canon = `${m[2]}:in:${m[3]}`;
+                    this.ports.set(canon, { el, onrecv });
+                }
+                // if key looks like "id:in:port", also register "type:id:port" (we need a type; best effort)
+                const n = /^([^:]+):in:(.+)$/.exec(key);
+                if (n && el) {
+                    const typeGuess = el.closest('.node')?.querySelector('.title')?.textContent?.trim()?.toLowerCase();
+                    if (typeGuess) this.ports.set(`${typeGuess}:${n[1]}:${n[2]}`, { el, onrecv });
+                }
+
+                if (!el) return;
+                el.addEventListener('click', () => {
+                    if (!CFG.wireMode) return;
+                    if (!this.sel) { this.sel = key; el.classList.add('sel'); return }
+                    const from = this.sel; this.clearSel();
+                    if (from === key) return;
+                    if (!this.wires.find(w => w.from === from && w.to === key)) {
+                        this.wires.push({ from, to: key });
+                        CFG.wires = this.wires.slice(); saveCFG();
+                        this.render();
+                        log(`wired ${from} → ${key}`);
+                    }
+                });
+            },
+
+            sendFrom(nodeId, portName, payload) {
+                const fromKey = `${nodeId}:out:${portName}`;
+                this.send(fromKey, payload);
+            },
             clearSel() { qsa('.port.sel').forEach(e => e.classList.remove('sel')); this.sel = null },
             send(from, payload) { for (const w of this.wires) { if (w.from === from) { const p = this.ports.get(w.to); try { p && p.onrecv && p.onrecv(payload, from, w.to) } catch (e) { log(`wire error ${w.from}→${w.to}: ${e.message}`) } } } },
             render() { const box = qs('#wiresBox'); if (!box) return; box.textContent = this.wires.length ? this.wires.map((w, i) => `${i + 1}. ${w.from} → ${w.to}`).join('\n') : '(no wires)' },
@@ -695,6 +1023,7 @@
             // live session
             sid: null, _startingSid: false,
 
+            activeNodeId: null,
             // sticky cfg for lazy session start
             _rate: 16000, _chunk: 120, _viaNkn: false, _base: '', _api: '', _relay: '', _live: true,
 
@@ -812,7 +1141,11 @@
                 const el = qs('#asrBuf'); if (el) el.textContent = String(this.bufF32.length);
                 return head;
             },
-            vu(p) { const el = qs('#asrVu'); if (el) el.style.width = Math.max(0, Math.min(100, Math.round(p * 150))) + '%' },
+            vu(p) {
+                const w = Math.max(0, Math.min(100, Math.round(p * 150)));
+                const el = qs('#asrVu'); if (el) el.style.width = w + '%';
+                qsa('[data-asr-vu] > b').forEach(b => { b.style.width = w + '%'; });
+            },
             resample(f, fr, tr) {
                 if (fr === tr) return f.slice(0);
                 const r = tr / fr, L = Math.round(f.length * r), o = new Float32Array(L);
@@ -824,25 +1157,34 @@
             },
             i16(f32) { const o = new Int16Array(f32.length); for (let i = 0; i < f32.length; i++) { const v = Math.max(-1, Math.min(1, f32[i])); o[i] = v < 0 ? v * 0x8000 : v * 0x7FFF } return new Uint8Array(o.buffer) },
             setState(txt, cls = 'ok') { const s = qs('#asrState'); const d = qs('#asrDot'); if (s) s.textContent = txt; if (d) d.className = 'dot ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : 'warn') },
-            printPartial(t) { const el = qs('#asrPartial'); if (el) el.textContent = t || ''; Router.send('asr:partial', { type: 'text', text: t || '' }) },
+            printPartial(t) {
+                const el = qs('#asrPartial'); if (el) el.textContent = t || '';
+                if (this.activeNodeId) Router.sendFrom(this.activeNodeId, 'partial', { type: 'text', text: t || '' });
+                Router.send('asr:partial', { type: 'text', text: t || '' }); // legacy
+            },
 
             addPhrase(t) {
                 if (!t) return;
                 const box = qs('#asrPhrases');
                 if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + t; box.scrollTop = box.scrollHeight; }
-                Router.send('asr:phrase', { type: 'text', text: t });
+                if (this.activeNodeId) Router.sendFrom(this.activeNodeId, 'phrase', { type: 'text', text: t });
+                Router.send('asr:phrase', { type: 'text', text: t }); // legacy
             },
 
             appendFinal(t) {
                 const s = (t || '').trim().replace(/\s+/g, ' ');
                 if (!s) return;
                 const now = performance.now();
-                if (s === this._lastFinal.text && (now - this._lastFinal.at) <= this._DEDUP_MS) { log('[asr] final deduped: "' + s + '"'); return; }
+                if (s === this._lastFinal.text && (now - this._lastFinal.at) <= this._DEDUP_MS) return;
                 this._lastFinal.text = s; this._lastFinal.at = now;
+
                 const box = qs('#asrFinals');
                 if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + s; box.scrollTop = box.scrollHeight; }
-                Router.send('asr:final', { type: 'text', text: s, eos: true });
+
+                if (this.activeNodeId) Router.sendFrom(this.activeNodeId, 'final', { type: 'text', text: s, eos: true });
+                Router.send('asr:final', { type: 'text', text: s, eos: true }); // legacy
             },
+
 
             ssePump(onEvent) {
                 let buf = '';
@@ -1256,6 +1598,7 @@
                 const ab = qs('#asrBuf'); if (ab) ab.textContent = '0';
                 const av = qs('#asrVad'); if (av) av.textContent = 'idle';
                 this.setState('idle', 'ok');
+                this.activeNodeId = null;
             },
 
             async finalizeOnce(rate) {
@@ -1598,10 +1941,16 @@
             _memLoaded: false,
             _history: [],            // [{role:'user'|'assistant'|'system', content:string}, ...]
             _lastUserText: '',       // captured per-turn so we can save to memory after streaming
-
+            _sysOverride: '',
             // Pull toggles from DOM or CFG with sane fallbacks
-            _useSystem() { return (qs('#llmUseSystem')?.value === 'true') || !!CFG.llm?.useSystem; },
-            _systemText() { return (qs('#llmSystem')?.value || CFG.llm?.system || '').trim(); },
+            _useSystem() {
+                return (qs('#llmUseSystem')?.value === 'true') || !!CFG.llm?.useSystem || !!this._sysOverride;
+            },
+            _systemText() {
+                // precedence: live override → UI value → CFG
+                return (this._sysOverride && this._sysOverride.trim())
+                    || (qs('#llmSystem')?.value || CFG.llm?.system || '').trim();
+            },
             _memoryOn() { return (qs('#llmMemory')?.value === 'true') || !!CFG.llm?.memoryOn; },
             _persistOn() { return (qs('#llmPersistMemory')?.value === 'true') || !!CFG.llm?.persistMemory; },
             _maxTurns() {
@@ -1609,7 +1958,13 @@
                 const n = parseInt(qs('#llmMaxTurns')?.value || (CFG.llm?.maxTurns ?? 16), 10);
                 return Number.isFinite(n) && n > 0 ? n : 16;
             },
-
+            onSystem(nodeId, payload) {
+                const n = Graph.getNode(nodeId); if (!n) return;
+                const s = String(payload && (payload.text ?? payload.prompt ?? payload) || '').trim();
+                n.config = Object.assign({}, n.config, { system: s, useSystem: 'true' });
+                Graph.save();                 // persist to this node only
+                setBadge(`System prompt updated for ${nodeId}`);
+            },
             _ensureMemoryLoaded() {
                 if (this._memLoaded) return;
                 // load any persisted memory
@@ -1736,35 +2091,82 @@
 
             setState(txt, cls = 'ok') { const s = qs('#llmState'); const d = qs('#llmDot'); if (s) s.textContent = txt; if (d) d.className = 'dot ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : 'warn') },
 
-            async onPrompt(payload) {
-                const text = (payload && (payload.text || payload.prompt || payload)) || '';
-                const model = qs('#llmModel')?.value || CFG.llm.model || '';
-                if (!model) { this.setState('no model', 'err'); return }
-                const stream = (qs('#llmStream')?.value) === 'true';
-                const viaNkn = CFG.transport === 'nkn', base = CFG.llm.base, api = CFG.llm.api, relay = CFG.llm.relay;
+            async onPrompt(nodeId, payload) {
+                const n = Graph.getNode(nodeId); if (!n) return;
+                const c = n.config || {};
 
-                // Build message list with system + history + latest user
-                const messages = this._buildMessages(text);
-                this._lastUserText = text; // remember for saving after we get assistant final
+                // per-node first, fall back to legacy keys, then global CFG
+                const base = (c.llmBase ?? c.base ?? CFG.llm?.base ?? '').trim();
+                const api = (c.llmApi ?? c.api ?? CFG.llm?.api ?? '').trim();
+                const relay = (c.llmRelay ?? c.relay ?? CFG.llm?.relay ?? '').trim();
+                const model = (c.llmModel ?? c.model ?? CFG.llm?.model ?? '').trim();
 
-                const out = qs('#llmTokens'); if (out) out.textContent = '';
-                let full = ''; let tok = 0; let bytes = 0; const t0 = performance.now();
-                const upd = () => { const t = qs('#llmTok'); if (t) t.textContent = String(tok); const b = qs('#llmBytes'); if (b) b.textContent = String(bytes); const m = qs('#llmMs'); if (m) m.textContent = String(Math.round(performance.now() - t0)) + 'ms' };
+                // per-node system toggle/text (transient; doesn’t mutate memory)
+                const sysUse = (c.llmUseSystem ?? c.useSystem) === 'true';
+                const sysTxt = (c.llmSystem ?? c.system ?? '').trim();
 
-                const emitSentence = (s) => { Router.send('llm:final', { text: s, eos: true }); };
+                const text = String(payload && (payload.text ?? payload.prompt ?? payload) || '');
+                const viaNkn = CFG.transport === 'nkn';
+                const stream = (c.llmStream ?? c.stream ?? 'true') === 'true';
 
+                // build messages from global UI/memory, then overlay per-node system if provided
+                let messages = this._buildMessages(text);
+                if (sysUse && sysTxt) {
+                    if (messages.length && messages[0].role === 'system') messages[0] = { role: 'system', content: sysTxt };
+                    else messages.unshift({ role: 'system', content: sysTxt });
+                }
+
+                // remember user text for memory persistence after completion
+                this._lastUserText = text;
+
+                // ensure a live token window exists (no-op if the card isn't open)
+                let out = qs('#llmTokens');
+                if (!out) {
+                    const card = document.querySelector('#llmCard .body');
+                    if (card) {
+                        out = document.createElement('pre');
+                        out.id = 'llmTokens';
+                        out.className = 'tokenStream';
+                        out.style.cssText = 'min-height:70px;max-height:140px;overflow:auto;background:rgba(0,0,0,.35);padding:6px;border-radius:6px;white-space:pre-wrap;';
+                        card.appendChild(out);
+                    }
+                }
+                if (out) out.textContent = '';
+
+                // stats + UI
+                let full = '';
+                let tok = 0;
+                let bytes = 0;
+                const t0 = performance.now();
+                const upd = () => {
+                    const t = qs('#llmTok'); if (t) t.textContent = String(tok);
+                    const b = qs('#llmBytes'); if (b) b.textContent = String(bytes);
+                    const m = qs('#llmMs'); if (m) m.textContent = String(Math.round(performance.now() - t0)) + 'ms';
+                };
+
+                // emitters (canonical per-node wires + legacy bus)
+                const emitDelta = (txt) => {
+                    Router.sendFrom(nodeId, 'delta', { nodeId, type: 'text', text: txt });
+                    Router.send('llm:delta', { nodeId, type: 'text', text: txt }); // legacy
+                };
+                const emitSentence = (s) => {
+                    Router.sendFrom(nodeId, 'final', { nodeId, text: s, eos: true });
+                    Router.send('llm:final', { nodeId, text: s, eos: true });     // legacy
+                };
+
+                // per-chunk handler
                 const handleLine = (ln) => {
                     try {
                         const obj = JSON.parse(ln);
 
-                        // prefer streaming delta
+                        // common streaming fields
                         let delta =
                             (obj.message && typeof obj.message.content === 'string' && obj.message.content) ||
                             (typeof obj.response === 'string' && obj.response) ||
                             (typeof obj.delta === 'string' && obj.delta) || '';
 
-                        // terminal-only content fallbacks
-                        if (!delta && (obj.done || obj.complete) && obj.final && typeof obj.final === 'string') {
+                        // terminal fallbacks
+                        if (!delta && (obj.done || obj.complete) && typeof obj.final === 'string') {
                             delta = obj.final;
                         }
                         if (!delta && (obj.done || obj.complete) && obj.message && typeof obj.message.content === 'string') {
@@ -1775,12 +2177,14 @@
                             const clean = stripEOT(delta);
                             full += clean;
                             if (out) { out.textContent += clean; out.scrollTop = out.scrollHeight; }
-                            tok += (clean.match(/\S+/g) || []).length; bytes += clean.length; upd();
+                            tok += (clean.match(/\S+/g) || []).length;
+                            bytes += clean.length;
+                            upd();
                             SentenceMux.pushDelta(clean, emitSentence);
-                            Router.send('llm:delta', { type: 'text', text: clean });
+                            emitDelta(clean);
                         }
                     } catch {
-                        // ignore mid-JSON fragments — the NDJSON pump will deliver complete objects
+                        // ignore mid-JSON fragments — NDJSON pump will deliver whole objects
                     }
                 };
 
@@ -1798,16 +2202,14 @@
                                 json: { model, messages, stream: true },
                                 timeout_ms: 180000
                             }, relay, {
-                                onBegin: () => { this.setState('stream open', 'warn') },
-                                onLine: (line, seq) => { order.push(line, seq) },
+                                onBegin: () => { this.setState('stream open', 'warn'); },
+                                onLine: (line, seq) => order.push(line, seq),
                                 onChunk: (u8) => pump.push(u8),
                                 onEnd: (m) => {
                                     order.end(m && (m.last_seq | 0));
                                     pump.flush();
                                     SentenceMux.flush(emitSentence);
                                     this.setState('done', 'ok');
-
-                                    // Save the completed turn if memory is on
                                     const finalText = stripEOT(full || '');
                                     this._rememberTurn(this._lastUserText, finalText);
                                 }
@@ -1820,34 +2222,45 @@
                             });
                             if (!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
                             const reader = r.body.getReader();
-                            while (true) { const { value, done } = await reader.read(); if (done) break; if (value && value.byteLength) pump.push(value) }
+                            while (true) {
+                                const { value, done } = await reader.read();
+                                if (done) break;
+                                if (value && value.byteLength) pump.push(value);
+                            }
                             pump.flush();
                             SentenceMux.flush(emitSentence);
                             this.setState('done', 'ok');
-
                             const finalText = stripEOT(full || '');
                             this._rememberTurn(this._lastUserText, finalText);
                         }
                     } else {
-                        const data = await Net.postJSON(base, '/api/chat', { model, messages, stream: false }, api, viaNkn, relay, 120000);
+                        // one-shot
+                        const data = await Net.postJSON(
+                            base, '/api/chat',
+                            { model, messages, stream: false },
+                            api, viaNkn, relay, 120000
+                        );
                         full = stripEOT((data?.message?.content) || (data?.response) || '');
                         const finalText = full || '';
                         tok = (finalText.match(/\S+/g) || []).length; bytes = finalText.length; upd();
+
+                        // show in token window if present
                         const outEl = qs('#llmTokens'); if (outEl) outEl.textContent = finalText;
+
                         this.setState('done', 'ok');
 
+                        // reuse the same sentence mux path so ports get identical events
                         SentenceMux.pushDelta(finalText + '\n', emitSentence);
                         SentenceMux.flush(emitSentence);
 
-                        // Save turn if memory is on
                         this._rememberTurn(this._lastUserText, finalText);
                     }
-
                 } catch (e) {
                     this.setState('error', 'err');
                     log('[llm] ' + e.message);
                 }
             }
+
         };
 
         /* ======== TTS ======== */
@@ -2160,6 +2573,664 @@
         };
 
 
+        // ─────────────────────────────────────────────────────────────
+        // Graph Editor (drag nodes, gear modal, SVG spline links)
+        // ─────────────────────────────────────────────────────────────
+        const Graph = (() => {
+            const WS = { el: null, svg: null, wires: [], nodes: new Map(), sel: null, portSel: null };
+
+            // ─────────────────────────────────────────────────────────────
+            // Card Editor helpers
+            // ─────────────────────────────────────────────────────────────
+            function hideAllCards() {
+                qsa('#asrCard, #llmCard, #ttsCard').forEach(el => {
+                    el.classList.add('isHidden');
+                    const tb = el.querySelector('.nodePanel');
+                    if (tb) tb.remove();
+                    el.removeAttribute('data-node-id');
+                });
+            }
+
+            function syncRouterFromWS() {
+                const newWires = WS.wires.map(w => ({
+                    from: `${w.from.node}:out:${w.from.port}`,
+                    to: `${w.to.node}:in:${w.to.port}`
+                }));
+                Router.wires = newWires;
+                CFG.wires = newWires.slice();
+                saveCFG();
+                Router.render();
+            }
+
+            function attachNodeToolbar(cardEl, nodeId, title) {
+                const bar = document.createElement('div');
+                bar.className = 'row nodePanel';
+                bar.style.margin = '10px 0 4px';
+                bar.innerHTML = `
+      <button class="secondary">Save to Node</button>
+      <button class="ghost">Close</button>
+      <span class="muted">Editing ${title} • <b>${nodeId}</b></span>
+    `;
+                const [btnSave, btnClose] = bar.querySelectorAll('button');
+                btnClose.addEventListener('click', hideAllCards);
+                btnSave.addEventListener('click', () => { saveCardToNode(nodeId); setBadge('Node settings saved'); });
+                const h2 = cardEl.querySelector('h2');
+                (h2 && h2.parentNode) ? h2.parentNode.insertBefore(bar, h2.nextSibling) : cardEl.prepend(bar);
+            }
+
+            function fillCardFromNode(node) {
+                const cfg = node.config || {};
+                const setVal = (id, v) => { const el = qs('#' + id); if (el && v !== undefined && v !== null && v !== '') el.value = String(v); };
+
+                if (node.type === 'ASR') {
+                    setVal('asrBase', cfg.asrBase ?? cfg.base);
+                    setVal('asrRelay', cfg.asrRelay ?? cfg.relay);
+                    setVal('asrApi', cfg.asrApi ?? cfg.api);
+                    setVal('asrModel', cfg.asrModel ?? cfg.model);
+                    setVal('asrMode', cfg.asrMode ?? cfg.mode);
+                    setVal('asrPrevWin', cfg.asrPrevWin);
+                    setVal('asrPrevStep', cfg.asrPrevStep);
+                    setVal('asrPrevModel', cfg.asrPrevModel);
+                    setVal('asrRate', cfg.asrRate);
+                    setVal('asrChunk', cfg.asrChunk);
+                    setVal('asrLive', cfg.asrLive);
+                    setVal('asrRms', cfg.asrRms);
+                    setVal('asrHold', cfg.asrHold);
+                    setVal('asrEmaMs', cfg.asrEmaMs);
+                    setVal('asrPhraseOn', cfg.asrPhraseOn);
+                    setVal('asrPhraseMin', cfg.asrPhraseMin);
+                    setVal('asrPhraseStable', cfg.asrPhraseStable);
+                    setVal('asrSilence', cfg.asrSilence);
+                    setVal('asrPrompt', cfg.asrPrompt);
+                } else if (node.type === 'LLM') {
+                    setVal('llmBase', cfg.llmBase ?? cfg.base);
+                    setVal('llmRelay', cfg.llmRelay ?? cfg.relay);
+                    setVal('llmApi', cfg.llmApi ?? cfg.api);
+                    setVal('llmModel', cfg.llmModel ?? cfg.model);
+                    setVal('llmStream', cfg.llmStream ?? cfg.stream);
+                    setVal('llmUseSystem', cfg.llmUseSystem ?? cfg.useSystem);
+                    setVal('llmSystem', cfg.llmSystem ?? cfg.system);
+                    setVal('llmMemory', cfg.llmMemory ?? cfg.memoryOn);
+                    setVal('llmPersistMemory', cfg.llmPersistMemory ?? cfg.persistMemory);
+                    setVal('llmMaxTurns', cfg.llmMaxTurns ?? cfg.maxTurns);
+                } else if (node.type === 'TTS') {
+                    setVal('ttsBase', cfg.ttsBase ?? cfg.base);
+                    setVal('ttsRelay', cfg.ttsRelay ?? cfg.relay);
+                    setVal('ttsApi', cfg.ttsApi ?? cfg.api);
+                    setVal('ttsModel', cfg.ttsModel ?? cfg.voice ?? cfg.model);
+                    setVal('ttsMode', cfg.ttsMode ?? cfg.mode);
+                }
+            }
+
+            function saveCardToNode(nodeId) {
+                const n = WS.nodes.get(nodeId); if (!n) return;
+                const cfg = Object.assign({}, n.config || {});
+                const getVal = id => { const el = qs('#' + id); return el ? (el.type === 'number' ? Number(el.value) : String(el.value)) : undefined; };
+
+                if (n.type === 'ASR') {
+                    Object.assign(cfg, {
+                        asrBase: getVal('asrBase'), asrRelay: getVal('asrRelay'), asrApi: getVal('asrApi'),
+                        asrModel: getVal('asrModel'), asrMode: getVal('asrMode'),
+                        asrPrevWin: getVal('asrPrevWin'), asrPrevStep: getVal('asrPrevStep'), asrPrevModel: getVal('asrPrevModel'),
+                        asrRate: Number(getVal('asrRate')), asrChunk: Number(getVal('asrChunk')), asrLive: getVal('asrLive'),
+                        asrRms: Number(getVal('asrRms')), asrHold: Number(getVal('asrHold')), asrEmaMs: Number(getVal('asrEmaMs')),
+                        asrPhraseOn: getVal('asrPhraseOn'), asrPhraseMin: Number(getVal('asrPhraseMin')),
+                        asrPhraseStable: Number(getVal('asrPhraseStable')), asrSilence: Number(getVal('asrSilence')), asrPrompt: getVal('asrPrompt')
+                    });
+                } else if (n.type === 'LLM') {
+                    Object.assign(cfg, {
+                        llmBase: getVal('llmBase'), llmRelay: getVal('llmRelay'), llmApi: getVal('llmApi'),
+                        llmModel: getVal('llmModel'), llmStream: getVal('llmStream'),
+                        llmUseSystem: getVal('llmUseSystem'), llmSystem: getVal('llmSystem'),
+                        llmMemory: getVal('llmMemory'), llmPersistMemory: getVal('llmPersistMemory'),
+                        llmMaxTurns: Number(getVal('llmMaxTurns'))
+                    });
+                } else if (n.type === 'TTS') {
+                    Object.assign(cfg, {
+                        ttsBase: getVal('ttsBase'), ttsRelay: getVal('ttsRelay'), ttsApi: getVal('ttsApi'),
+                        ttsModel: getVal('ttsModel'), ttsMode: getVal('ttsMode')
+                    });
+                }
+
+                n.config = cfg;
+                saveGraph();
+                closeSettings();
+                setBadge('Settings saved');
+
+                if (n.type === 'LLM' && (cfg.llmSystem ?? cfg.system) != null) {
+                    LLM.onSystem(n.id, { text: (cfg.llmSystem ?? cfg.system) });
+                }
+            }
+
+            function openNodeCard(nodeId) {
+                const n = WS.nodes.get(nodeId); if (!n) return;
+                hideAllCards();
+
+                const map = { ASR: '#asrCard', LLM: '#llmCard', TTS: '#ttsCard' };
+                const sel = map[n.type];
+                const card = sel ? qs(sel) : null;
+                if (!card) return;
+
+                card.dataset.nodeId = nodeId;
+                card.classList.remove('isHidden');
+
+                if (n.type === 'ASR') ASR.activeNodeId = n.id;
+
+                if (n.type === 'ASR') {
+                    const mini = document.createElement('div');
+                    mini.className = 'row';
+                    mini.style.marginTop = '8px';
+                    mini.innerHTML = `
+        <button class="gear asrPlay" title="Start/Stop">▶</button>
+        <div class="vu" data-asr-vu="${n.id}" style="flex:1"><b></b></div>
+      `;
+                    card.querySelector('.body').appendChild(mini);
+                    const btn = mini.querySelector('.asrPlay');
+                    const setGlyph = () => { btn.textContent = ASR.running ? '■' : '▶'; };
+                    setGlyph();
+                    btn.addEventListener('click', () => {
+                        if (ASR.running) {
+                            if (ASR.activeNodeId === n.id) { ASR.stop(); ASR.activeNodeId = null; }
+                            else { ASR.activeNodeId = n.id; setBadge(`Mic now owned by ${n.id}`); }
+                        } else { ASR.activeNodeId = n.id; ASR.start(); }
+                        setTimeout(setGlyph, 0);
+                    });
+                }
+
+                if (n.type === 'LLM') {
+                    const body = card.querySelector('.body');
+                    if (body && !card.querySelector('#llmTokens')) {
+                        const pre = document.createElement('pre');
+                        pre.id = 'llmTokens';
+                        pre.className = 'tokenStream';
+                        pre.style.cssText = 'min-height:70px;max-height:140px;overflow:auto;background:rgba(0,0,0,.35);padding:6px;border-radius:6px;white-space:pre-wrap;';
+                        body.appendChild(pre);
+                    }
+                    const out = card.querySelector('#llmTokens'); if (out) out.textContent = '';
+                }
+
+                attachNodeToolbar(card, nodeId, TYPES[n.type].title);
+
+                // Per-card status dots
+                if (!card.querySelector(`[data-card-status="${n.id}"]`)) {
+                    const row = document.createElement('div');
+                    row.className = 'row';
+                    row.dataset.cardStatus = n.id;
+                    row.style.cssText = 'gap:10px;margin:8px 0;align-items:center;';
+                    row.innerHTML = `
+        <span title="NKN"><span class="dot err" id="cardNknDot-${n.id}"></span>NKN</span>
+        <span title="${n.type} service"><span class="dot err" id="card${n.type}SvcDot-${n.id}"></span>${n.type}</span>
+      `;
+                    const body = card.querySelector('.body');
+                    card.insertBefore(row, body);
+                }
+                if (window.Status && Status.refreshForNode) Status.refreshForNode(n, 'card');
+
+                fillCardFromNode(n);
+            }
+
+            // ─────────────────────────────────────────────────────────────
+            // Node type registry
+            // ─────────────────────────────────────────────────────────────
+            const TYPES = {
+                ASR: {
+                    title: 'ASR',
+                    inputs: [],
+                    outputs: [
+                        { name: 'partial', wireKey: 'asr:partial' },
+                        { name: 'phrase', wireKey: 'asr:phrase' },
+                        { name: 'final', wireKey: 'asr:final' }
+                    ],
+                    schema: [
+                        { key: 'base', label: 'Base URL', type: 'text', placeholder: 'http://localhost:8126', def: CFG.asr?.base || '' },
+                        { key: 'relay', label: 'NKN Relay', type: 'text', def: CFG.asr?.relay || '' },
+                        { key: 'api', label: 'API Key', type: 'text', def: CFG.asr?.api || '' },
+                        { key: 'model', label: 'Model', type: 'text', def: CFG.asr?.model || '' },
+                        { key: 'mode', label: 'ASR Mode', type: 'select', options: ['fast', 'accurate'], def: CFG.asr?.mode || 'fast' }
+                    ]
+                },
+                LLM: {
+                    title: 'LLM',
+                    inputs: [
+                        { name: 'prompt', wireKey: 'llm:prompt' },
+                        { name: 'system', wireKey: 'llm:system' }
+                    ],
+                    outputs: [
+                        { name: 'delta', wireKey: 'llm:delta' },
+                        { name: 'final', wireKey: 'llm:final' },
+                        { name: 'memory', wireKey: 'llm:memory' } // ← NEW: wire out memory
+                    ],
+                    schema: [
+                        { key: 'base', label: 'Base URL', type: 'text', placeholder: 'http://127.0.0.1:11434', def: CFG.llm?.base || '' },
+                        { key: 'relay', label: 'NKN Relay', type: 'text', def: CFG.llm?.relay || '' },
+                        { key: 'api', label: 'API Key', type: 'text', def: CFG.llm?.api || '' },
+                        { key: 'model', label: 'Model', type: 'text', def: CFG.llm?.model || '' },
+                        { key: 'stream', label: 'Stream', type: 'select', options: ['true', 'false'], def: String(!!CFG.llm?.stream) },
+                        { key: 'system', label: 'System Prompt', type: 'textarea', def: '' }
+                    ]
+                },
+                TTS: {
+                    title: 'TTS',
+                    inputs: [{ name: 'text', wireKey: 'tts:text' }],
+                    outputs: [],
+                    schema: [
+                        { key: 'base', label: 'Base URL', type: 'text', placeholder: 'http://localhost:8123', def: CFG.tts?.base || '' },
+                        { key: 'relay', label: 'NKN Relay', type: 'text', def: CFG.tts?.relay || '' },
+                        { key: 'api', label: 'API Key', type: 'text', def: CFG.tts?.api || '' },
+                        { key: 'voice', label: 'Voice', type: 'text', def: CFG.tts?.model || '' },
+                        { key: 'mode', label: 'Mode', type: 'select', options: ['stream', 'file'], def: CFG.tts?.mode || 'stream' }
+                    ]
+                }
+            };
+
+            const uid = () => 'n' + Math.random().toString(36).slice(2, 8);
+            function getSettingsNodeId() { return (document.querySelector('#settingsModal')?.dataset?.nodeId) || null; }
+            function readFormKV(formEl) { const fd = new FormData(formEl); const cfg = {}; fd.forEach((v, k) => cfg[k] = String(v)); return cfg; }
+
+            // ─────────────────────────────────────────────────────────────
+            // Wire removal helpers
+            // ─────────────────────────────────────────────────────────────
+            function removeWireById(id) {
+                const w = WS.wires.find(x => x.id === id);
+                if (!w) return;
+                w.path?.remove();
+                WS.wires = WS.wires.filter(x => x !== w);
+                syncRouterFromWS();
+                saveGraph();
+                drawAllLinks();
+                setBadge('Wire removed');
+            }
+
+            function removeWiresAt(nodeId, side, portName) {
+                const toRemove = WS.wires.filter(w =>
+                    (side === 'out' && w.from.node === nodeId && w.from.port === portName) ||
+                    (side === 'in' && w.to.node === nodeId && w.to.port === portName)
+                );
+                toRemove.forEach(w => w.path?.remove());
+                WS.wires = WS.wires.filter(w => !toRemove.includes(w));
+                syncRouterFromWS();
+                saveGraph();
+                drawAllLinks();
+                setBadge(`Disconnected ${toRemove.length} link(s) on ${nodeId}:${side}:${portName}`);
+            }
+
+            // ─────────────────────────────────────────────────────────────
+            // Node DOM
+            // ─────────────────────────────────────────────────────────────
+            function makeNodeEl(node) {
+                const t = TYPES[node.type];
+                const el = document.createElement('div');
+                el.className = 'node';
+                el.style.left = (node.x || 60) + 'px';
+                el.style.top = (node.y || 60) + 'px';
+                el.dataset.id = node.id;
+
+                el.innerHTML = `
+      <div class="head">
+        <div class="title">${t.title}</div>
+        <div class="row" style="gap:6px;">
+          <button class="gear" title="Settings">⚙</button>
+          <button class="gear" title="Remove">🗑</button>
+        </div>
+      </div>
+      <div class="body">
+        <div class="ports">
+          <div class="side left"></div>
+          <div class="side right"></div>
+        </div>
+      </div>
+    `;
+
+                // ASR mini toolbar + VU on the node
+                if (node.type === 'ASR') {
+                    const mini = document.createElement('div');
+                    mini.className = 'row';
+                    mini.style.marginTop = '8px';
+                    mini.innerHTML = `
+        <button class="gear asrPlay" title="Start/Stop">▶</button>
+        <div class="vu" data-asr-vu="${node.id}" style="flex:1"><b></b></div>
+      `;
+                    el.querySelector('.body').appendChild(mini);
+                    const btn = mini.querySelector('.asrPlay');
+                    const setGlyph = () => { btn.textContent = ASR.running && ASR.activeNodeId === node.id ? '■' : '▶'; };
+                    setGlyph();
+                    btn.addEventListener('click', () => {
+                        ASR.activeNodeId = node.id;
+                        if (ASR.running && ASR.activeNodeId === node.id) { ASR.stop(); }
+                        else if (ASR.running && ASR.activeNodeId !== node.id) { setBadge(`Mic now owned by ${node.id}`); ASR.stop(); setTimeout(() => ASR.start(), 0); }
+                        else { ASR.start(); }
+                        setTimeout(setGlyph, 0);
+                    });
+                }
+
+                // Per-node status dots
+                const stat = document.createElement('div');
+                stat.className = 'row miniStatus';
+                stat.dataset.nodeStatus = node.id;
+                stat.style.cssText = 'gap:8px;margin-top:6px;align-items:center;';
+                stat.innerHTML = `
+      <span title="NKN"><span class="dot err" id="nknDot-${node.id}"></span>NKN</span>
+      <span title="${node.type} service"><span class="dot err" id="${node.type.toLowerCase()}SvcDot-${node.id}"></span>${node.type}</span>
+    `;
+                el.querySelector('.body').appendChild(stat);
+                if (window.Status && Status.refreshForNode) Status.refreshForNode(node, 'node');
+
+                // Ports
+                const left = el.querySelector('.side.left');
+                const right = el.querySelector('.side.right');
+
+                for (const p of t.inputs) {
+                    const r = document.createElement('div');
+                    r.className = 'wp-port in';
+                    r.dataset.port = p.name;
+                    r.title = `${p.name} (Alt-click to disconnect)`;
+                    r.innerHTML = `<span class="dot"></span><span>${p.name}</span>`;
+                    r.addEventListener('click', (ev) => {
+                        if (ev.altKey || ev.metaKey || ev.ctrlKey) { removeWiresAt(node.id, 'in', p.name); return; }
+                        onPortClick(node.id, 'in', p.name, r);
+                    });
+                    left.appendChild(r);
+
+                    Router.register(`${node.id}:in:${p.name}`, r, (payload) => {
+                        if (node.type === 'LLM') {
+                            if (p.name === 'prompt') return LLM.onPrompt(node.id, payload);
+                            if (p.name === 'system') return LLM.onSystem(node.id, payload);
+                        } else if (node.type === 'TTS') {
+                            if (p.name === 'text') return TTS.onText(payload);
+                        }
+                    });
+                }
+
+                for (const p of t.outputs) {
+                    const r = document.createElement('div');
+                    r.className = 'wp-port out';
+                    r.dataset.port = p.name;
+                    r.title = `${p.name} (Alt-click to disconnect)`;
+                    r.innerHTML = `<span>${p.name}</span><span class="dot"></span>`;
+                    r.addEventListener('click', (ev) => {
+                        if (ev.altKey || ev.metaKey || ev.ctrlKey) { removeWiresAt(node.id, 'out', p.name); return; }
+                        onPortClick(node.id, 'out', p.name, r);
+                    });
+                    right.appendChild(r);
+                }
+
+                // Dragging
+                const head = el.querySelector('.head');
+                let drag = null;
+                head.addEventListener('pointerdown', (e) => {
+                    if (e.target.closest('button')) return;
+                    drag = { dx: e.clientX - el.offsetLeft, dy: e.clientY - el.offsetTop };
+                    head.setPointerCapture(e.pointerId);
+                });
+                head.addEventListener('pointermove', (e) => {
+                    if (!drag) return;
+                    const gx = Math.round((e.clientX - drag.dx) / 14) * 14;
+                    const gy = Math.round((e.clientY - drag.dy) / 14) * 14;
+                    el.style.left = gx + 'px';
+                    el.style.top = gy + 'px';
+                    node.x = gx; node.y = gy;
+                    drawAllLinks();
+                });
+                head.addEventListener('pointerup', () => { drag = null; saveGraph(); });
+
+                // Gear + delete
+                const [btnGear, btnDel] = el.querySelectorAll('.gear');
+                btnGear.addEventListener('click', () => {
+                    const modal = document.querySelector('#settingsModal');
+                    if (modal && !modal.classList.contains('hidden')) {
+                        const openId = getSettingsNodeId();
+                        if (openId && WS.nodes.has(openId)) {
+                            const openNode = WS.nodes.get(openId);
+                            const form = document.querySelector('#settingsForm');
+                            if (form) { openNode.config = readFormKV(form); saveGraph(); }
+                        }
+                    }
+                    openSettings(node.id);
+                });
+                btnDel.addEventListener('click', () => removeNode(node.id));
+
+                return el;
+            }
+
+            // ─────────────────────────────────────────────────────────────
+            // Wire linking
+            // ─────────────────────────────────────────────────────────────
+            function onPortClick(nodeId, side, portName, el) {
+                if (!WS.portSel) {
+                    if (side !== 'out') { setBadge('Pick an output first', false); return; }
+                    WS.portSel = { nodeId, side, portName, el };
+                    el.classList.add('sel');
+                    return;
+                }
+                if (side !== 'in') { setBadge('Connect to an input port', false); return; }
+                if (nodeId === WS.portSel.nodeId) { setBadge('Cannot self-link', false); return; }
+
+                addLink(WS.portSel.nodeId, WS.portSel.portName, nodeId, portName);
+                WS.portSel.el.classList.remove('sel');
+                WS.portSel = null;
+            }
+
+            function addLink(fromNodeId, fromPort, toNodeId, toPort) {
+                if (WS.wires.find(w => w.from.node === fromNodeId && w.from.port === fromPort && w.to.node === toNodeId && w.to.port === toPort)) return;
+
+                const w = { id: uid(), from: { node: fromNodeId, port: fromPort }, to: { node: toNodeId, port: toPort }, path: null };
+                WS.wires.push(w);
+
+                const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                p.setAttribute('fill', 'none');
+                p.setAttribute('stroke', 'rgba(255,255,255,.7)');
+                p.setAttribute('stroke-width', '2');
+                p.setAttribute('stroke-linecap', 'round');
+                p.setAttribute('opacity', '0.95');
+                p.dataset.id = w.id;
+
+                // Remove the wire: Alt/Meta/Ctrl click or double-click
+                const kill = (e) => { removeWireById(w.id); e.stopPropagation(); };
+                p.addEventListener('click', (e) => { if (e.altKey || e.metaKey || e.ctrlKey) kill(e); });
+                p.addEventListener('dblclick', kill);
+
+                WS.svg.appendChild(p);
+                w.path = p;
+
+                const fk = `${fromNodeId}:out:${fromPort}`;
+                const tk = `${toNodeId}:in:${toPort}`;
+                if (!Router.wires.find(x => x.from === fk && x.to === tk)) {
+                    Router.wires.push({ from: fk, to: tk });
+                    CFG.wires = Router.wires.slice(); saveCFG(); Router.render();
+                    log(`wired ${fk} → ${tk}`);
+                }
+
+                drawAllLinks(); saveGraph();
+            }
+
+            function portCenter(nodeId, side, portName) {
+                const n = WS.nodes.get(nodeId); if (!n) return { x: 0, y: 0 };
+                const dot = n.el.querySelector(`.wp-port.${side}[data-port="${CSS.escape(portName)}"] .dot`);
+                if (!dot) return { x: 0, y: 0 };
+                const r = dot.getBoundingClientRect();
+                const ws = WS.el.getBoundingClientRect();
+                return { x: r.left - ws.left + r.width / 2, y: r.top - ws.top + r.height / 2 };
+            }
+
+            function drawLink(w) {
+                const a = portCenter(w.from.node, 'out', w.from.port);
+                const b = portCenter(w.to.node, 'in', w.to.port);
+                const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
+                const d = `M ${a.x},${a.y} C ${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`;
+                w.path.setAttribute('d', d);
+            }
+            function drawAllLinks() { for (const w of WS.wires) drawLink(w); }
+
+            // ─────────────────────────────────────────────────────────────
+            // Settings modal
+            // ─────────────────────────────────────────────────────────────
+            function openSettings(nodeId) {
+                const n = WS.nodes.get(nodeId); if (!n) return;
+                const modal = qs('#settingsModal');
+                const slot = qs('#settingsSlot');
+                const hint = qs('#settingsHint');
+
+                const map = { ASR: '#asrCard', LLM: '#llmCard', TTS: '#ttsCard' };
+                const sel = map[n.type];
+                const card = sel ? qs(sel) : null;
+                if (!card || !slot || !modal) return;
+
+                fillCardFromNode(n);
+
+                const ph = document.createElement('div');
+                ph.id = card.id + '-ph';
+                ph.style.display = 'none';
+                card.parentNode.insertBefore(ph, card);
+
+                slot.innerHTML = '';
+                slot.appendChild(card);
+                card.classList.remove('isHidden');
+                card.style.removeProperty('display');
+
+                modal.dataset.nodeId = nodeId;
+                modal.dataset.placeholderId = ph.id;
+                hint.textContent = `${TYPES[n.type].title} • ${nodeId}`;
+                modal.classList.remove('hidden');
+            }
+
+            function closeSettings() {
+                const modal = qs('#settingsModal');
+                const slot = qs('#settingsSlot');
+                if (!modal || !slot) return;
+                const phId = modal.dataset.placeholderId;
+                const ph = phId ? qs('#' + phId) : null;
+                const card = slot.firstElementChild;
+                if (ph && ph.parentNode && card) {
+                    ph.parentNode.replaceChild(card, ph);
+                    card.classList.add('isHidden');
+                    card.style.display = 'none';
+                } else if (ph) { ph.remove(); }
+                delete modal.dataset.nodeId;
+                delete modal.dataset.placeholderId;
+                modal.classList.add('hidden');
+            }
+
+            function bindModal() {
+                qs('#closeSettings')?.addEventListener('click', closeSettings);
+                qs('#cancelSettings')?.addEventListener('click', closeSettings);
+                qs('#saveSettings')?.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const nodeId = qs('#settingsModal')?.dataset?.nodeId;
+                    if (nodeId) { saveCardToNode(nodeId); setBadge('Settings saved'); }
+                });
+            }
+
+            function removeNode(nodeId) {
+                const n = WS.nodes.get(nodeId); if (!n) return;
+                WS.wires.slice().forEach(w => {
+                    if (w.from.node === nodeId || w.to.node === nodeId) {
+                        w.path?.remove();
+                        WS.wires = WS.wires.filter(x => x !== w);
+                    }
+                });
+                n.el.remove();
+                WS.nodes.delete(nodeId);
+                syncRouterFromWS();
+                saveGraph();
+                drawAllLinks();
+            }
+
+            // ─────────────────────────────────────────────────────────────
+            // Persistence
+            // ─────────────────────────────────────────────────────────────
+            function saveGraph() {
+                const data = {
+                    nodes: Array.from(WS.nodes.values()).map(n => ({ id: n.id, type: n.type, x: n.x, y: n.y, config: n.config || {} })),
+                    links: WS.wires.map(w => ({ from: w.from, to: w.to }))
+                };
+                LS.set('graph.workspace', data);
+            }
+
+            function loadGraph() {
+                const data = LS.get('graph.workspace', null);
+                if (!data) return;
+                WS.el.innerHTML = '';
+                WS.svg.innerHTML = '';
+                WS.nodes.clear();
+                WS.wires = [];
+                for (const n of data.nodes) {
+                    const node = { id: n.id, type: n.type, x: n.x, y: n.y, config: n.config || {} };
+                    node.el = makeNodeEl(node);
+                    WS.el.appendChild(node.el);
+                    WS.nodes.set(node.id, node);
+                }
+                for (const l of data.links) addLink(l.from.node, l.from.port, l.to.node, l.to.port);
+                drawAllLinks();
+            }
+
+            // ─────────────────────────────────────────────────────────────
+            // Toolbar / boot
+            // ─────────────────────────────────────────────────────────────
+            function addNode(type, x = 70, y = 70) {
+                const id = uid();
+                const n = { id, type, x, y, config: {} };
+                n.el = makeNodeEl(n);
+                WS.el.appendChild(n.el);
+                WS.nodes.set(id, n);
+                saveGraph();
+                drawAllLinks();
+                return n;
+            }
+
+            function exportGraph() {
+                const data = LS.get('graph.workspace', { nodes: [], links: [] });
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'realtime-graph.json'; a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            function importGraph() {
+                const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/json';
+                inp.onchange = () => {
+                    const f = inp.files?.[0]; if (!f) return;
+                    f.text().then(t => {
+                        const data = JSON.parse(t);
+                        LS.set('graph.workspace', data);
+                        loadGraph();
+                        setBadge('Graph imported');
+                    }).catch(e => setBadge('Import failed: ' + e.message, false));
+                };
+                inp.click();
+            }
+
+            function bindToolbar() {
+                qs('#addASR')?.addEventListener('click', () => addNode('ASR', 90, 90));
+                qs('#addLLM')?.addEventListener('click', () => addNode('LLM', 340, 120));
+                qs('#addTTS')?.addEventListener('click', () => addNode('TTS', 640, 160));
+                qs('#exportGraph')?.addEventListener('click', exportGraph);
+                qs('#importGraph')?.addEventListener('click', importGraph);
+            }
+
+            function onResize() { drawAllLinks(); }
+
+            function init() {
+                WS.el = qs('#workspace'); WS.svg = qs('#linksSvg');
+                bindToolbar(); bindModal();
+                const hasSaved = !!LS.get('graph.workspace', null);
+                if (!hasSaved) {
+                    const a = addNode('ASR', 90, 200);
+                    const l = addNode('LLM', 380, 180);
+                    const t = addNode('TTS', 680, 200);
+                    addLink(a.id, 'final', l.id, 'prompt');
+                    addLink(l.id, 'final', t.id, 'text');
+                } else {
+                    loadGraph();
+                }
+                window.addEventListener('resize', onResize);
+                setTimeout(drawAllLinks, 50);
+            }
+
+            return { init, addNode, save: saveGraph, load: loadGraph, getNode: (id) => WS.nodes.get(id) };
+        })();
+
+
         /* ======== boot / bindings ======== */
         function bindUI() {
             // global
@@ -2181,7 +3252,7 @@
             if (qs('#asrPrevWin')) qs('#asrPrevWin').value = CFG.asr.prevWin || '';
             if (qs('#asrPrevStep')) qs('#asrPrevStep').value = CFG.asr.prevStep || '';
             if (qs('#asrPrevModel')) qs('#asrPrevModel').value = CFG.asr.prevModel || '';
-
+            qsa('#asrCard, #llmCard, #ttsCard').forEach(el => el.classList.add('isHidden'));
             qsa('#asrCard input, #asrCard select, #asrCard textarea').forEach(el => el.addEventListener('change', () => {
                 CFG.asr.base = qs('#asrBase')?.value.trim() || CFG.asr.base; CFG.asr.relay = qs('#asrRelay')?.value.trim() || ''; CFG.asr.api = qs('#asrApi')?.value.trim() || '';
                 CFG.asr.rate = parseInt(qs('#asrRate')?.value || '16000', 10) || 16000; CFG.asr.chunk = parseInt(qs('#asrChunk')?.value || '120', 10) || 120;
@@ -2272,19 +3343,15 @@
         }
 
         function bindPorts() {
-            Router.register('asr:partial', qsa('[data-port="asr:partial"]')[0], () => { });
-            Router.register('asr:phrase', qsa('[data-port="asr:phrase"]')[0], (p) => LLM.onPrompt(p));
-            Router.register('asr:final', qsa('[data-port="asr:final"]')[0], (p) => LLM.onPrompt(p));
-            Router.register('llm:prompt', qsa('[data-port="llm:prompt"]')[0], (p) => LLM.onPrompt(p));
-            Router.register('llm:delta', qsa('[data-port="llm:delta"]')[0], () => { });
-            Router.register('llm:final', qsa('[data-port="llm:final"]')[0], (p) => TTS.onText(p));
-            Router.register('tts:text', qsa('[data-port="tts:text"]')[0], (p) => TTS.onText(p));
+            // node-scoped ports are registered per-node in makeNodeEl()
             Router.render();
         }
+
 
         /* boot */
         function init() {
             bindUI(); bindPorts();
+            Graph.init();
             if (!CFG.asr.prompt || !CFG.asr.prompt.trim()) {
                 CFG.asr.prompt = ASR_DEFAULT_PROMPT;
                 const p = qs('#asrPrompt'); if (p) p.value = CFG.asr.prompt;
@@ -2298,9 +3365,11 @@
             TTS.refreshModels();
             const wb = qs('#wiresBox');
             if (wb) wb.textContent = CFG.wires.length ? CFG.wires.map((w, i) => `${i + 1}. ${w.from} → ${w.to}`).join('\n') : '(no wires)';
+            Status.start();
         }
 
         document.addEventListener('DOMContentLoaded', init);
+
     </script>
 
 </body>
