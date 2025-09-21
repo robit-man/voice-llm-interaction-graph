@@ -312,6 +312,20 @@
                 <label>Model</label>
                 <input id="asrModel" list="asrModelList" placeholder="base · small · medium · large-v3" />
                 <datalist id="asrModelList"></datalist>
+                <label>ASR Mode</label>
+                <select id="asrMode">
+                    <option value="fast" selected>fast (lower latency)</option>
+                    <option value="accurate">accurate (steadier)</option>
+                </select>
+
+                <label>Preview Window (s)</label>
+                <input id="asrPrevWin" type="number" step="0.1" placeholder="(server default)" />
+
+                <label>Preview Step (s)</label>
+                <input id="asrPrevStep" type="number" step="0.05" placeholder="(server default)" />
+
+                <label>Preview Model (override)</label>
+                <input id="asrPrevModel" list="asrModelList" placeholder="(blank = server default)" />
                 <label>Rate</label><input id="asrRate" type="number" value="16000" />
                 <label>Chunk (ms)</label><input id="asrChunk" type="number" value="120" />
                 <label>Live</label><select id="asrLive">
@@ -515,7 +529,12 @@
                 phraseOn: true, phraseMin: 3, phraseStable: 350,
                 silence: 900,
                 prompt: '',
-                model: ''
+                model: '',
+                // NEW
+                mode: 'fast',
+                prevWin: '',   // number or '' to use server default
+                prevStep: '',  // number or '' to use server default
+                prevModel: ''  // name or '' = server default for chosen mode
             },
             llm: { base: 'http://127.0.0.1:11434', relay: '', api: '', model: '', stream: true },
             tts: { base: 'http://localhost:8123', relay: '', api: '', model: '', mode: 'stream' },
@@ -845,6 +864,34 @@
                 };
             },
 
+            async refreshHealth() {
+                try {
+                    const viaNkn = CFG.transport === 'nkn';
+                    const h = await Net.getJSON(CFG.asr.base, '/health', CFG.asr.api, viaNkn, CFG.asr.relay);
+                    // e.g. { modes: { default, fast:{window_s,step_s}, accurate:{window_s,step_s} }, models:{...} }
+                    const m = h?.modes || {};
+                    // Use placeholders so users see server defaults at a glance
+                    const fw = m.fast?.window_s, fs = m.fast?.step_s, aw = m.accurate?.window_s, as = m.accurate?.step_s;
+                    const win = qs('#asrPrevWin'); const step = qs('#asrPrevStep');
+                    if (win && !win.value) {
+                        const md = (qs('#asrMode')?.value || CFG.asr.mode || 'fast');
+                        win.placeholder = md === 'fast' ? String(fw ?? '') : String(aw ?? '');
+                    }
+                    if (step && !step.value) {
+                        const md = (qs('#asrMode')?.value || CFG.asr.mode || 'fast');
+                        step.placeholder = md === 'fast' ? String(fs ?? '') : String(as ?? '');
+                    }
+                    // tiny UX hint
+                    const meta = qs('#asrMeta');
+                    if (meta && h?.models) {
+                        const pf = h.models.preview_fast, pa = h.models.preview_accurate, full = h.models.full;
+                        meta.textContent = `device=${h.device} • full=${full} • fast=${pf} • accurate=${pa}`;
+                    }
+                } catch (e) {
+                    // ignore; health is just UX sugar
+                }
+            },
+
             resetAggr() { this.aggr.prev = ''; this.aggr.pend = ''; this.aggr.pendStart = 0; this.aggr.lastChange = 0; },
 
             handlePartialForPhrases(text) {
@@ -926,10 +973,28 @@
                 this._startingSid = true;
                 try {
                     const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
+                    // NEW: pull mode + overrides from UI/CFG
+                    const mode = (qs('#asrMode')?.value || CFG.asr.mode || 'fast');
+                    const preview_model = (qs('#asrPrevModel')?.value || CFG.asr.prevModel || '').trim();
+                    const preview_window_s_raw = (qs('#asrPrevWin')?.value || CFG.asr.prevWin || '').trim();
+                    const preview_step_s_raw = (qs('#asrPrevStep')?.value || CFG.asr.prevStep || '').trim();
+                    const preview_window_s = preview_window_s_raw ? Number(preview_window_s_raw) : undefined;
+                    const preview_step_s = preview_step_s_raw ? Number(preview_step_s_raw) : undefined;
+
                     const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
-                    const body = Object.assign({}, prompt ? { prompt } : {}, model ? { model } : {}, {
-                        temperature: 0.0, condition_on_previous_text: false, no_speech_threshold: 0.6, logprob_threshold: -1.0
-                    });
+                    const body = {
+                        ...(prompt ? { prompt } : {}),
+                        mode,                              // "fast" or "accurate"
+                        ...(preview_model ? { preview_model } : {}),
+                        ...(Number.isFinite(preview_window_s) ? { preview_window_s } : {}),
+                        ...(Number.isFinite(preview_step_s) ? { preview_step_s } : {}),
+                        // (optional) conservative defaults/guardrails if you still want them:
+                        temperature: 0.0,
+                        condition_on_previous_text: false,
+                        no_speech_threshold: 0.6,
+                        logprob_threshold: -1.0
+                    };
+
                     const data = await Net.postJSON(this._base, '/recognize/stream/start', body, this._api, this._viaNkn, this._relay, 45000);
                     this.sid = (data && (data.sid || data.id || data.session)) || null;
                     if (!this.sid) throw new Error('no sid');
@@ -1238,6 +1303,8 @@
                             }
                         } else if (t === 'asr.final' || t === 'final') {
                             const s = (obj.result && obj.result.text) || obj.text || '';
+                            const sessionMode = obj.result?.mode || obj.mode;
+                            if (sessionMode) log(`[asr] final (${sessionMode}): ${JSON.stringify(s)}`);
                             if (s) {
                                 const meta = (obj.result && obj.result) || obj;
                                 if (ASR.shouldDropAsHallucination(s, meta)) {
@@ -1684,7 +1751,7 @@
                 let full = ''; let tok = 0; let bytes = 0; const t0 = performance.now();
                 const upd = () => { const t = qs('#llmTok'); if (t) t.textContent = String(tok); const b = qs('#llmBytes'); if (b) b.textContent = String(bytes); const m = qs('#llmMs'); if (m) m.textContent = String(Math.round(performance.now() - t0)) + 'ms' };
 
-                const emitSentence = (s) => { Router.send('tts:text', { text: s, eos: true }); };
+                const emitSentence = (s) => { Router.send('llm:final', { text: s, eos: true }); };
 
                 const handleLine = (ln) => {
                     try {
@@ -1776,7 +1843,6 @@
                         this._rememberTurn(this._lastUserText, finalText);
                     }
 
-                    Router.send('llm:final', { type: 'text', text: full });
                 } catch (e) {
                     this.setState('error', 'err');
                     log('[llm] ' + e.message);
@@ -1919,54 +1985,35 @@
                 return hit;
             },
 
+
             // ─────────────────────────────────────────────────────────────
             // NEW: punctuation/symbol scrubber (runs just before synth)
             // ─────────────────────────────────────────────────────────────
-            // replace the whole function with this:
-            _sanitizeForTTS(text) {
-                if (!text) return '';
-                let s = text;
+            _sanitizeForTTS(s) {
+                if (!s) return '';
                 try { s = s.normalize('NFKC'); } catch { }
-
-                // 1) kill URLs and markdown artifacts
+                s = s.replace(/[\u2019\u2018]/g, "'"); // ’ ‘ → '
+                s = s.replace(/\s*'\s*/g, "'");       // tighten around '
+                // light clean only (no whitespace removal inside words)
                 s = s.replace(/\bhttps?:\/\/\S+/gi, ' ');
                 s = s.replace(/[*_~`]+/g, ' ');
-
-                // 2) readable ampersands
-                s = s.replace(/&/g, ' and ');
-
-                // 3) STRIP apostrophes entirely (ASCII + curly) so "don't" → "dont"
-                //    do this BEFORE generic punctuation so we don't create "don t"
-                s = s.replace(/['’]/g, '');
-
-                // 4) remove common quotes/brackets explicitly (avoids engine differences)
+                s = s.replace(/\u2026/g, '.').replace(/\.{3,}/g, '.');
                 s = s.replace(/[“”"«»‹›„‟]/g, ' ');
                 s = s.replace(/[\[\](){}<>]/g, ' ');
-
-                // 5) remove emojis/symbols ranges
-                try { s = s.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' '); } catch { }
-
-                // 6) generic punctuation/symbol sweep (fallback-safe)
-                try {
-                    s = s.replace(/[\p{P}\p{S}]/gu, ' ');
-                } catch {
-                    // apostrophes already stripped above; avoid adding them here
-                    s = s.replace(/[!#$%()*+,\-.\/:;<=>?@\\^_|~…—–‘•··]+/g, ' ');
-                }
-
-                // 7) collapse whitespace
-                s = s.replace(/\s+/g, ' ').trim();
-
-                return s;
+                // keep . , ? ! to preserve prosody
+                return s.replace(/[^\S\r\n]+/g, ' ').replace(/\s*([.,?!])\s*/g, '$1 ').trim();
             },
+
+
 
             async onText(payload) {
                 const raw = (payload && (payload.text || payload)) || '';
                 const eos = !!(payload && payload.eos);
-                const piece = raw.trim();
+                const piece = String(raw);
                 if (!piece) return;
 
-                const combined = (this._ingressCarry ? (this._ingressCarry + ' ') : '') + piece;
+                const combined = (this._ingressCarry || '') + piece;
+
                 const { complete, rest } = this._splitComplete(combined);
                 this._ingressCarry = rest;
 
@@ -1990,6 +2037,7 @@
             async _speakOne(text) {
                 // sanitize here — AFTER sentence concatenation, BEFORE synth
                 const clean = this._sanitizeForTTS(text);
+                console.log(clean);
                 if (!clean) return;
 
                 const mode = qs('#ttsMode')?.value || 'stream';
@@ -2128,6 +2176,11 @@
             if (qs('#asrSilence')) qs('#asrSilence').value = CFG.asr.silence;
             if (qs('#asrPrompt')) qs('#asrPrompt').value = CFG.asr.prompt || '';
             if (qs('#asrModel')) qs('#asrModel').value = CFG.asr.model || '';
+            // load values
+            if (qs('#asrMode')) qs('#asrMode').value = CFG.asr.mode || 'fast';
+            if (qs('#asrPrevWin')) qs('#asrPrevWin').value = CFG.asr.prevWin || '';
+            if (qs('#asrPrevStep')) qs('#asrPrevStep').value = CFG.asr.prevStep || '';
+            if (qs('#asrPrevModel')) qs('#asrPrevModel').value = CFG.asr.prevModel || '';
 
             qsa('#asrCard input, #asrCard select, #asrCard textarea').forEach(el => el.addEventListener('change', () => {
                 CFG.asr.base = qs('#asrBase')?.value.trim() || CFG.asr.base; CFG.asr.relay = qs('#asrRelay')?.value.trim() || ''; CFG.asr.api = qs('#asrApi')?.value.trim() || '';
@@ -2186,6 +2239,12 @@
                 CFG.llm.persistMemory = (qs('#llmPersistMemory')?.value) === 'true';
                 CFG.llm.maxTurns = parseInt(qs('#llmMaxTurns')?.value || '16', 10) || 16;
 
+                // in the big "qsa('#asrCard input, #asrCard select, #asrCard textarea')" listener, capture the new fields:
+                CFG.asr.mode = (qs('#asrMode')?.value || 'fast');
+                CFG.asr.prevWin = (qs('#asrPrevWin')?.value || '').trim();
+                CFG.asr.prevStep = (qs('#asrPrevStep')?.value || '').trim();
+                CFG.asr.prevModel = (qs('#asrPrevModel')?.value || '').trim();
+
                 saveCFG(); setBadge('Saved');
             }));
 
@@ -2234,6 +2293,7 @@
             if (CFG.transport === 'nkn') Net.ensureNkn();
             setBadge('Ready');
             ASR.refreshModels();
+            ASR.refreshHealth(); // NEW
             LLM.refreshModels();
             TTS.refreshModels();
             const wb = qs('#wiresBox');
