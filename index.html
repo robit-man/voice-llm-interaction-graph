@@ -499,10 +499,14 @@
             },
             async getJSON(base, path, api, useNkn, relay) {
                 if (!useNkn) {
-                    const r = await fetch(base.replace(/\/+$/, '') + path, { headers: this.auth({}, api) });
-                    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.json();
+                    const headers = this.auth({}, api);
+                    delete headers['Content-Type'];          // ← remove for GET
+                    headers['Accept'] = 'application/json';
+                    const r = await fetch(base.replace(/\/+$/, '') + path, { headers });
+                    if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+                    return r.json();
                 }
-                return this.nknFetch(base, path, 'GET', null, api, relay)
+                return this.nknFetch(base, path, 'GET', null, api, relay);
             },
             async postJSON(base, path, body, api, useNkn, relay, timeout = 45000) {
                 if (!useNkn) {
@@ -590,7 +594,13 @@
                 });
             },
             async nknFetch(base, path, method, json, api, relay, timeout = 45000) {
-                const req = { url: base.replace(/\/+$/, '') + path, method, headers: this.auth({}, api), timeout_ms: timeout }; if (json !== null) req.json = json;
+                const headers = this.auth({}, api);
+                if (method === 'GET') {
+                    delete headers['Content-Type'];          // ← avoid preflight in relay
+                    headers['Accept'] = 'application/json';
+                }
+                const req = { url: base.replace(/\/+$/, '') + path, method, headers, timeout_ms: timeout };
+                if (json !== null) req.json = json;
                 const r = await this.nknSend(req, relay, timeout); if (!r || r.ok === false) throw new Error((r && r.error) || ('HTTP ' + (r && r.status)));
                 if (r.json !== undefined && r.json !== null) return r.json;
                 if (r.body_b64) { const u8 = b64ToBytes(r.body_b64); return JSON.parse(td.decode(u8)) }
@@ -619,104 +629,35 @@
 
         /* ======== ASR ======== */
         const ASR = {
-            running: false, ac: null, node: null, media: null, source: null, bufF32: new Float32Array(0), out: 0, sid: null, _sawSpeech: false, finalizing: false,
+            running: false, ac: null, node: null, media: null, source: null,
+            bufF32: new Float32Array(0), out: 0, sid: null,
+            _sawSpeech: false, finalizing: false, _vadWatch: null,
+            // de-dupe window for identical final text (ms)
+            _DEDUP_MS: 1500,
+            _lastFinal: { text: '', at: 0 },
+
             // VAD state
             vad: { ema: 0, state: 'silence', lastVoice: 0, lastSilence: 0 },
+
             // phrase stream aggregator
             aggr: { prev: '', pend: '', pendStart: 0, lastChange: 0, lastEmit: 0 },
+
             models: [],
             _timer: null,
             _slow: 180000,   // 3 min when healthy
             _fast: 30000,    // 30s when empty/error
-            // finalize current live session on silence, append final text, reopen a fresh session
-            async _finalizeLiveAndRestart() {
-                if (this.finalizing) return;  // NEW guard
-                const oldSid = this.sid;
-                if (!oldSid) return;
-                this.finalizing = true;
 
-                const viaNkn = CFG.transport === 'nkn';
-                const base = CFG.asr.base;
-                const relay = CFG.asr.relay;
-                const api = CFG.asr.api;
-
-                // Pause audio uploads by clearing sid (flushLoop will idle)
-                this.sid = null;
-
-                try {
-                    // Trigger final on server
-                    const r = await Net.postJSON(
-                        base,
-                        `/recognize/stream/${encodeURIComponent(oldSid)}/end`,
-                        {},
-                        api, viaNkn, relay, 20000
-                    );
-
-                    const finalText = r?.final?.text || r?.final?.result?.text || '';
-                    if (finalText) {
-                        this.handleFinalFlush(finalText);
-                        this.appendFinal(finalText);
-                        this.printPartial('');
-                    }
-                } catch (e) {
-                    log('[asr] finalize-live ' + (e?.message || e));
-                }
-
-                // Immediately start a new session if we're still running
-                try {
-                    if (!this.running) return;
-                    this.resetAggr();
-                    this._sawSpeech = false;
-
-                    const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
-                    const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
-                    const body = Object.assign(
-                        {},
-                        prompt ? { prompt } : {},
-                        model ? { model } : {},
-                        {
-                            temperature: 0.0,
-                            condition_on_previous_text: false,
-                            no_speech_threshold: 0.6,
-                            logprob_threshold: -1.0
-                        }
-                    );
-                    const data = await Net.postJSON(base, '/recognize/stream/start', body, api, viaNkn, relay, 20000);
-                    this.sid = data && (data.id || data.sid || data.session);
-
-                    if (this.sid) {
-                        // Reopen SSE
-                        this.openEvents(this.sid, viaNkn, base, relay, api).catch(() => { });
-                    } else {
-                        this.setState('idle', 'warn');
-                    }
-                } catch (e) {
-                    this.setState('idle', 'warn');
-                    log('[asr] auto-start ' + (e?.message || e));
-                } finally {
-                    this.finalizing = false;   // NEW
-                }
-            }
-            ,
-
+            // ===== model discovery =====
             async _probeModels() {
                 const viaNkn = CFG.transport === 'nkn';
                 const base = CFG.asr.base, relay = CFG.asr.relay, api = CFG.asr.api;
 
-                // Primary: your microservice
-                try {
-                    const data = await Net.getJSON(base, '/models', api, viaNkn, relay);
-                    const arr = (data?.models || []).map(m => m?.name || m?.model || m?.id).filter(Boolean);
-                    return { arr, current: data?.current || {} };
-                } catch { }
-
-                // Fallbacks (generic)
-                const paths = ['/api/models', '/whisper/models'];
+                // put normalize BEFORE the primary try
                 const normalize = (data) => {
                     const pick = (arr) => arr.map(m =>
                         typeof m === 'string' ? m : (m && (m.name || m.model || m.id || m.tag)) || ''
                     ).filter(Boolean);
-                    if (!data || typeof data !== 'object') return [];
+                    if (!data || typeof data !== 'object') return Array.isArray(data) ? pick(data) : [];
                     if (Array.isArray(data)) return pick(data);
                     if (Array.isArray(data.models)) return pick(data.models);
                     if (Array.isArray(data.items)) return pick(data.items);
@@ -724,6 +665,15 @@
                     return [];
                 };
 
+                // Primary: /models (normalize any shape)
+                try {
+                    const data = await Net.getJSON(base, '/models', api, viaNkn, relay);
+                    const arr = normalize(data);
+                    return { arr, current: data?.current || {} };
+                } catch { }
+
+                // Fallbacks
+                const paths = ['/api/models', '/whisper/models', '/recognize/models'];
                 for (const p of paths) {
                     try {
                         const resp = await Net.getJSON(base, p, api, viaNkn, relay);
@@ -762,6 +712,7 @@
                 }
             },
 
+            // ===== tiny utils =====
             pushF32(f32) { const a = this.bufF32, b = f32; const out = new Float32Array(a.length + b.length); out.set(a, 0); out.set(b, a.length); this.bufF32 = out; const el = qs('#asrBuf'); if (el) el.textContent = String(out.length) },
             drainF32(n) { const a = this.bufF32; const take = Math.min(a.length, n); const head = a.subarray(0, take); this.bufF32 = a.subarray(take).slice(0); const el = qs('#asrBuf'); if (el) el.textContent = String(this.bufF32.length); return head },
             vu(p) { const el = qs('#asrVu'); if (el) el.style.width = Math.max(0, Math.min(100, Math.round(p * 150))) + '%' },
@@ -769,24 +720,66 @@
             i16(f32) { const o = new Int16Array(f32.length); for (let i = 0; i < f32.length; i++) { const v = Math.max(-1, Math.min(1, f32[i])); o[i] = v < 0 ? v * 0x8000 : v * 0x7FFF } return new Uint8Array(o.buffer) },
             setState(txt, cls = 'ok') { const s = qs('#asrState'); const d = qs('#asrDot'); if (s) s.textContent = txt; if (d) d.className = 'dot ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : 'warn') },
             printPartial(t) { const el = qs('#asrPartial'); if (el) el.textContent = t || ''; Router.send('asr:partial', { type: 'text', text: t || '' }) },
-            addPhrase(t) { if (!t) return; const box = qs('#asrPhrases'); if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + t; box.scrollTop = box.scrollHeight; } Router.send('asr:phrase', { type: 'text', text: t }) },
-            appendFinal(t) { const box = qs('#asrFinals'); if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + (t || ''); box.scrollTop = box.scrollHeight; } Router.send('asr:final', { type: 'text', text: t || '' }) },
 
-            ssePump(onEvent) { let buf = ''; return (u8) => { buf += td.decode(u8, { stream: true }); let i; while ((i = buf.indexOf('\n\n')) >= 0) { const chunk = buf.slice(0, i); buf = buf.slice(i + 2); let ev = null, data = ''; for (const line of chunk.split(/\r?\n/)) { if (!line) continue; if (line.startsWith(':')) continue; if (line.startsWith('event:')) ev = line.slice(6).trim(); else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim() } if (data) onEvent(ev || 'message', data) } } },
+            addPhrase(t) {
+                if (!t) return;
+                const box = qs('#asrPhrases');
+                if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + t; box.scrollTop = box.scrollHeight; }
+                Router.send('asr:phrase', { type: 'text', text: t });
+            },
+
+            // FINAL de-duped append
+            appendFinal(t) {
+                const s = (t || '').trim().replace(/\s+/g, ' ');
+                if (!s) return;
+                const now = performance.now();
+                if (s === this._lastFinal.text && (now - this._lastFinal.at) <= this._DEDUP_MS) {
+                    log('[asr] final deduped: "' + s + '"');
+                    return;
+                }
+                this._lastFinal.text = s; this._lastFinal.at = now;
+
+                const box = qs('#asrFinals');
+                if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + s; box.scrollTop = box.scrollHeight; }
+                Router.send('asr:final', { type: 'text', text: s });
+            },
+
+            ssePump(onEvent) {
+                let buf = '';
+                return (u8) => {
+                    buf += td.decode(u8, { stream: true });
+                    let i;
+                    while ((i = buf.indexOf('\n\n')) >= 0) {
+                        const chunk = buf.slice(0, i);
+                        buf = buf.slice(i + 2);
+                        let ev = null, data = '';
+                        for (const line of chunk.split(/\r?\n/)) {
+                            if (!line) continue;
+                            if (line.startsWith(':')) continue;
+                            if (line.startsWith('event:')) ev = line.slice(6).trim();
+                            else if (line.startsWith('data:')) data += (data ? '\n' : '') + line.slice(5).trim();
+                        }
+                        if (data) onEvent(ev || 'message', data);
+                    }
+                };
+            },
 
             resetAggr() { this.aggr.prev = ''; this.aggr.pend = ''; this.aggr.pendStart = 0; this.aggr.lastChange = 0; },
 
             handlePartialForPhrases(text) {
-                if ((qs('#asrPhraseOn')?.value) !== 'true') return; // disabled
+                if ((qs('#asrPhraseOn')?.value) !== 'true') return;
                 const minW = parseInt(qs('#asrPhraseMin')?.value || '3', 10) || 3;
                 const stableMs = parseInt(qs('#asrPhraseStable')?.value || '350', 10) || 350;
 
                 const prev = this.aggr.prev || '';
                 if (!text.startsWith(prev)) {
                     this.aggr.prev = text;
-                    this.aggr.pend = ''; this.aggr.pendStart = performance.now(); this.aggr.lastChange = this.aggr.pendStart;
+                    this.aggr.pend = '';
+                    this.aggr.pendStart = performance.now();
+                    this.aggr.lastChange = this.aggr.pendStart;
                     return;
                 }
+
                 const added = text.slice(prev.length);
                 const now = performance.now();
                 if (added.length > 0) {
@@ -809,13 +802,48 @@
                 if (this.aggr.pend) {
                     this.addPhrase(this.aggr.pend.trim());
                     this.aggr.pend = '';
-                } else {
-                    if (text.startsWith(this.aggr.prev || '')) {
-                        const extra = text.slice((this.aggr.prev || '').length).trim();
-                        if (extra) this.addPhrase(extra);
-                    }
+                } else if (text.startsWith(this.aggr.prev || '')) {
+                    const extra = text.slice((this.aggr.prev || '').length).trim();
+                    if (extra) this.addPhrase(extra);
                 }
                 this.aggr.prev = text;
+            },
+
+            // ===== VAD-driven finalize =====
+            async _finalizeLiveAndRestart() {
+                if (this.finalizing) return;
+                const oldSid = this.sid;
+                if (!oldSid) return;
+                this.finalizing = true;
+
+                const viaNkn = CFG.transport === 'nkn';
+                const base = CFG.asr.base;
+                const relay = CFG.asr.relay;
+                const api = CFG.asr.api;
+
+                this._autoEndSid = oldSid;
+                this.sid = null;
+                clearInterval(this._vadWatch); this._vadWatch = null;
+
+                // stop mic immediately
+                try { this.node && this.node.disconnect(); } catch { }
+                try { this.source && this.source.disconnect(); } catch { }
+                try { this.media && this.media.getTracks().forEach(t => t.stop()); } catch { }
+                try { this.ac && this.ac.close(); } catch { }
+                this.node = this.source = this.media = this.ac = null;
+                this.running = false;
+                this.setState('finalizing…', 'warn');
+
+                try {
+                    // POST /end — do NOT append anything from its JSON.
+                    await Net.postJSON(base, `/recognize/stream/${encodeURIComponent(oldSid)}/end`, {}, api, viaNkn, relay, 20000);
+                } catch (e) {
+                    log('[asr] finalize-live ' + (e?.message || e));
+                } finally {
+                    // allow SSE for oldSid to deliver the single authoritative asr.final
+                    // restart will be scheduled when that SSE ends (see openEvents then-handler)
+                    this.finalizing = false;
+                }
             },
 
             async _rollSessionOnSilence() {
@@ -835,25 +863,21 @@
                 try {
                     const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
                     const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
-                    const body = Object.assign(
-                        {},
-                        prompt ? { prompt } : {},
-                        model ? { model } : {},
-                        {
-                            temperature: 0.0,
-                            condition_on_previous_text: false,
-                            no_speech_threshold: 0.6,
-                            logprob_threshold: -1.0
-                        }
-                    );
+                    const body = Object.assign({}, prompt ? { prompt } : {}, model ? { model } : {}, {
+                        temperature: 0.0, condition_on_previous_text: false, no_speech_threshold: 0.6, logprob_threshold: -1.0
+                    });
                     const data = await Net.postJSON(base, '/recognize/stream/start', body, api, viaNkn, relay, 20000);
                     this.sid = data && (data.sid || data.id || data.session);
                     if (this.sid) this.openEvents(this.sid, viaNkn, base, relay, api).catch(() => { });
                 } catch (e) { log('[asr] auto-start ' + (e?.message || e)); this.setState('idle', 'warn'); }
                 this.resetAggr();
             },
+
             async start() {
                 if (this.running) return;
+
+                // (re)set de-dupe window state
+                this._lastFinal = { text: '', at: 0 };
 
                 // ── config
                 const rate = parseInt(qs('#asrRate')?.value || '16000', 10) || 16000;
@@ -869,9 +893,7 @@
                 const relay = CFG.asr.relay;
                 const api = CFG.asr.api;
 
-                // ── auto-restart flags
-                // _autoEndSid is set only when we auto-call /end due to silence.
-                // _restartFlag suppresses clearing the Finals area on restart.
+                // auto-restart flags
                 this._autoEndSid = null;
                 const suppressReset = !!this._restartFlag;
                 this._restartFlag = false;
@@ -879,6 +901,7 @@
                 // real-time state flags
                 this._sawSpeech = false;
                 this._lastSpeechAt = 0;
+                this._silenceGate = null;
                 this.finalizing = false;
 
                 // ── audio + VAD wire-up
@@ -922,6 +945,7 @@
                                 this.vad.lastVoice = now;
                                 this._sawSpeech = true;
                                 this._lastSpeechAt = now;
+                                this._silenceGate = null;
                             }
                         } else {
                             if (ema < offTh) {
@@ -929,12 +953,19 @@
                                     this.vad.state = 'silence';
                                     this.vad.lastSilence = now;
 
+                                    // freeze whether there was speech just before silence
+                                    this._silenceGate = {
+                                        at: now,
+                                        hadRecentSpeech: ((now - (this._lastSpeechAt || 0)) < 2500) && this._sawSpeech
+                                    };
+
                                     // flush phrase edge (UI only)
                                     if (this.aggr.pend) { this.addPhrase(this.aggr.pend.trim()); this.aggr.pend = ''; }
                                 }
                             } else {
                                 this.vad.lastVoice = now;
                                 this._lastSpeechAt = now;
+                                this._silenceGate = null;
                             }
                         }
 
@@ -960,76 +991,58 @@
                             }
                         }
 
-                        // live: REAL final trigger — call /end (no fake finals)
-                        if (
-                            live && this.sid && !this.finalizing &&
-                            this._sawSpeech && recentSpeech && this.vad.state === 'silence' &&
-                            (now - (this.vad.lastSilence || now)) >= silence
-                        ) {
-                            this.finalizing = true;
+                        const hadRecent = !!(this._silenceGate && this._silenceGate.hadRecentSpeech);
 
-                            // capture sid we're ending and mark for auto-restart
-                            const sidToEnd = this.sid;
-                            this._autoEndSid = sidToEnd;
-
-                            // stop sending more audio immediately, keep SSE open
-                            this.sid = null;  // causes flushLoop to wind down
-                            try { this.node && this.node.disconnect(); } catch { }
-                            try { this.source && this.source.disconnect(); } catch { }
-                            try { this.media && this.media.getTracks().forEach(t => t.stop()); } catch { }
-                            try { this.ac && this.ac.close(); } catch { }
-                            this.node = this.source = this.media = this.ac = null;
-                            this.running = false;
-                            this.setState('finalizing…', 'warn');
-
-                            // Tell backend to finalize; we will wait for SSE 'asr.final' and stream close.
-                            (async () => {
-                                try {
-                                    await Net.postJSON(base, `/recognize/stream/${encodeURIComponent(sidToEnd)}/end`, {}, api, viaNkn, relay, 20000);
-                                } catch (e) {
-                                    log('[asr] auto-end ' + (e?.message || e));
-                                }
-                            })();
+                        // Final trigger (callback path)
+                        if (live && this.sid && !this.finalizing && hadRecent &&
+                            this.vad.state === 'silence' && (now - (this.vad.lastSilence || now)) >= silence) {
+                            log('[asr] callback: VAD silence → finalize');
+                            this._finalizeLiveAndRestart().catch(e => log('[asr] finalize(cb) ' + (e?.message || e)));
                         }
                     };
 
                     this.source.connect(this.node);
                     this.node.connect(this.ac.destination);
+
+                    clearInterval(this._vadWatch);
+                    if (live) {
+                        // watchdog path (out-of-band timer)
+                        this._vadWatch = setInterval(() => {
+                            if (!this.sid || this.finalizing) return;
+                            const now = performance.now();
+                            const hadRecent = !!(this._silenceGate && this._silenceGate.hadRecentSpeech);
+                            if (this.vad.state === 'silence' &&
+                                (now - (this.vad.lastSilence || now)) >= silence &&
+                                hadRecent) {
+                                log('[asr] watchdog: VAD silence → finalize');
+                                this._finalizeLiveAndRestart().catch(e => log('[asr] finalize(watchdog) ' + (e?.message || e)));
+                            }
+                        }, Math.max(50, Math.min(200, chunk)));
+                    }
                 } catch (e) {
                     this.setState('mic error', 'err');
                     log('[asr] ' + e.message);
                     return;
                 }
 
-                // ── UI reset (keep Finals across auto-restarts)
+                // UI reset (keep Finals on auto-restarts)
                 const p = qs('#asrPartial'); if (p) p.textContent = '';
                 const ph = qs('#asrPhrases'); if (ph) ph.textContent = '';
-                if (!suppressReset) {
-                    const f = qs('#asrFinals'); if (f) f.textContent = '';
-                }
+                if (!suppressReset) { const f = qs('#asrFinals'); if (f) f.textContent = ''; }
                 this.resetAggr();
 
                 this.running = true;
                 this.out = 0; const ao = qs('#asrOut'); if (ao) ao.textContent = '0';
                 this.setState(live ? 'streaming' : 'batch', 'warn');
 
-                // ── live session / SSE / uploader
+                // live session / SSE / uploader
                 if (live) {
                     try {
                         const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
                         const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
-                        const body = Object.assign(
-                            {},
-                            prompt ? { prompt } : {},
-                            model ? { model } : {},
-                            {
-                                temperature: 0.0,
-                                condition_on_previous_text: false,
-                                no_speech_threshold: 0.6,
-                                logprob_threshold: -1.0
-                                // suppress_tokens: [ /* backend-specific IDs if supported */ ]
-                            }
-                        );
+                        const body = Object.assign({}, prompt ? { prompt } : {}, model ? { model } : {}, {
+                            temperature: 0.0, condition_on_previous_text: false, no_speech_threshold: 0.6, logprob_threshold: -1.0
+                        });
                         const data = await Net.postJSON(base, '/recognize/stream/start', body, api, viaNkn, relay, 45000);
                         this.sid = (data && (data.sid || data.id || data.session)) || null;
                         if (!this.sid) throw new Error('no sid');
@@ -1041,24 +1054,20 @@
 
                     const thisSid = this.sid;
 
-                    // When SSE ends (after backend sends the REAL final), auto-restart if we were the ones who auto-ended.
+                    // Restart only after the old SSE closes (prevents cross-talk)
                     this.openEvents(thisSid, viaNkn, base, relay, api)
                         .then(() => {
                             if (this._autoEndSid === thisSid) {
-                                // Prepare a restart that doesn't wipe the Finals pane
                                 this._restartFlag = true;
                                 this._autoEndSid = null;
-
-                                // Small delay to ensure old loops fully unwind
                                 setTimeout(() => {
-                                    // Only restart if live mode is still on
                                     if ((qs('#asrLive')?.value) === 'true') this.start();
                                 }, 120);
                             }
                         })
                         .catch(() => { /* ignore */ });
 
-                    // Audio sender loop; exits when sid becomes null or running=false
+                    // audio sender loop
                     this.flushLoop(rate, chunk, viaNkn, base, relay, api).catch(() => { });
                 } else {
                     this.setState('ready (batch)', 'ok');
@@ -1068,10 +1077,16 @@
             async stop() {
                 if (!this.running) return; this.setState('stopping', 'warn');
                 this.running = false;
-                try { this.node && this.node.disconnect() } catch { } try { this.source && this.source.disconnect() } catch { }
-                try { this.media && this.media.getTracks().forEach(t => t.stop()) } catch { } try { this.ac && this.ac.close() } catch { }
+                this._autoEndSid = null;
+                try { this.node && this.node.disconnect() } catch { }
+                try { this.source && this.source.disconnect() } catch { }
+                try { this.media && this.media.getTracks().forEach(t => t.stop()) } catch { }
+                try { this.ac && this.ac.close() } catch { }
                 this.node = this.source = this.media = this.ac = null;
-                this.bufF32 = new Float32Array(0); const ab = qs('#asrBuf'); if (ab) ab.textContent = '0'; const av = qs('#asrVad'); if (av) av.textContent = 'idle';
+                clearInterval(this._vadWatch); this._vadWatch = null;
+                this.bufF32 = new Float32Array(0);
+                const ab = qs('#asrBuf'); if (ab) ab.textContent = '0';
+                const av = qs('#asrVad'); if (av) av.textContent = 'idle';
                 if (this.sid) { try { await Net.postJSON(CFG.asr.base, `/recognize/stream/${encodeURIComponent(this.sid)}/end`, {}, CFG.asr.api, CFG.transport === 'nkn', CFG.asr.relay, 20000) } catch { } }
                 this.sid = null; this.setState('idle', 'ok');
             },
@@ -1090,14 +1105,15 @@
                     const data = await Net.postJSON(CFG.asr.base, '/recognize', body, CFG.asr.api, CFG.transport === 'nkn', CFG.asr.relay, 120000);
                     const txt = (data && (data.text || data.transcript)) || '';
                     if (txt) this.appendFinal(txt);
-                }
-                catch (e) { log('[asr] finalize ' + e.message) }
+                } catch (e) { log('[asr] finalize ' + e.message) }
             },
 
             async openEvents(sid, viaNkn, base, relay, api) {
                 const pump = this.ssePump((ev, data) => {
                     try {
-                        const obj = JSON.parse(data); const t = (obj.type || obj.event || '').toLowerCase();
+                        const obj = JSON.parse(data);
+                        const t = (obj.type || obj.event || '').toLowerCase();
+
                         if (t === 'asr.partial' || t === 'partial') {
                             const text = obj.text || (obj.result && obj.result.text) || '';
                             this.printPartial(text);
@@ -1110,44 +1126,52 @@
                             const s = obj.text || (obj.result && obj.result.text) || '';
                             if (s) {
                                 const meta = (obj.result && obj.result) || obj;
-                                if (!ASR.shouldDropAsHallucination(s, meta)) {
-                                    this.addPhrase(s);
-                                } else {
-                                    log('[asr] suppressed hallucinated sign-off (detected): "' + s + '"');
-                                }
+                                if (!ASR.shouldDropAsHallucination(s, meta)) this.addPhrase(s);
+                                else log('[asr] suppressed hallucinated sign-off (detected): "' + s + '"');
                             }
                         } else if (t === 'asr.final' || t === 'final') {
                             const s = (obj.result && obj.result.text) || obj.text || '';
                             if (s) {
-                                const meta = (obj.result && obj.result) || obj; // use whatever fields we have
+                                const meta = (obj.result && obj.result) || obj;
                                 if (ASR.shouldDropAsHallucination(s, meta)) {
                                     log('[asr] dropped probable hallucinated sign-off: "' + s + '"');
                                 } else {
                                     this.handleFinalFlush(s);
-                                    this.appendFinal(s);
+                                    this.appendFinal(s);           // <-- de-duped here
                                 }
                             }
                             this.printPartial('');
-                        }
-                        else if (t === 'error') {
+                        } else if (t === 'error') {
                             log('[asr] ' + (obj.message || obj.error || 'error'));
                         }
+
                         const e = qs('#asrEvt'); if (e) e.textContent = t;
                     } catch { }
                 });
+
                 const ev = qs('#asrEvt'); if (ev) ev.textContent = 'connecting';
+
                 if (viaNkn) {
-                    await Net.nknStream({ url: base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(sid)}/events`, method: 'GET', headers: Net.auth({ 'X-Relay-Stream': 'chunks' }, api), timeout_ms: 10 * 60 * 1000 }, relay, {
-                        onBegin: () => { const e = qs('#asrEvt'); if (e) e.textContent = 'open'; this.setState('streaming', 'ok'); },
-                        onChunk: (bytes) => pump(bytes),
-                        onEnd: () => { const e = qs('#asrEvt'); if (e) e.textContent = 'ended'; }
-                    });
+                    await Net.nknStream(
+                        { url: base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(sid)}/events`, method: 'GET', headers: Net.auth({ 'X-Relay-Stream': 'chunks' }, api), timeout_ms: 10 * 60 * 1000 },
+                        relay,
+                        {
+                            onBegin: () => { const e = qs('#asrEvt'); if (e) e.textContent = 'open'; this.setState('streaming', 'ok'); },
+                            onChunk: (bytes) => pump(bytes),
+                            onEnd: () => {
+                                const e = qs('#asrEvt'); if (e) e.textContent = 'ended';
+                                clearInterval(ASR._vadWatch); ASR._vadWatch = null;
+                            }
+                        }
+                    );
                 } else {
                     const r = await fetch(base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(sid)}/events`, { headers: Net.auth({}, api) });
                     if (!r.ok || !r.body) { const e = qs('#asrEvt'); if (e) e.textContent = 'error'; return }
                     const e = qs('#asrEvt'); if (e) e.textContent = 'open';
-                    const reader = r.body.getReader(); while (true) { const { value, done } = await reader.read(); if (done) break; if (value && value.byteLength) pump(value) }
+                    const reader = r.body.getReader();
+                    while (true) { const { value, done } = await reader.read(); if (done) break; if (value && value.byteLength) pump(value) }
                     const ed = qs('#asrEvt'); if (ed) ed.textContent = 'ended';
+                    clearInterval(ASR._vadWatch); ASR._vadWatch = null;
                 }
             },
 
@@ -1159,8 +1183,12 @@
                         const url = base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(this.sid)}/audio?format=pcm16&sr=${rate}`;
                         this.out++; const ao = qs('#asrOut'); if (ao) ao.textContent = String(this.out);
                         try {
-                            if (viaNkn) { await Net.nknSend({ url, method: 'POST', headers: Net.auth({ 'Content-Type': 'application/octet-stream' }, api), body_b64: btoa(String.fromCharCode(...bytes)), timeout_ms: 20000 }, relay, 20000) }
-                            else { const r = await fetch(url, { method: 'POST', headers: Net.auth({ 'Content-Type': 'application/octet-stream' }, api), body: bytes }); if (!r.ok) throw new Error(r.status + ' ' + r.statusText) }
+                            if (viaNkn) {
+                                await Net.nknSend({ url, method: 'POST', headers: Net.auth({ 'Content-Type': 'application/octet-stream' }, api), body_b64: btoa(String.fromCharCode(...bytes)), timeout_ms: 20000 }, relay, 20000);
+                            } else {
+                                const r = await fetch(url, { method: 'POST', headers: Net.auth({ 'Content-Type': 'application/octet-stream' }, api), body: bytes });
+                                if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+                            }
                         } catch (e) { log('[asr] audio send ' + (e && e.message || e)) }
                         finally { this.out--; const ao2 = qs('#asrOut'); if (ao2) ao2.textContent = String(this.out) }
                     }
@@ -1168,17 +1196,16 @@
                 }
             }
         };
+
         // Decide whether a final looks like a sign-off hallucination
         ASR.shouldDropAsHallucination = function (text, meta) {
             if (!SIGNOFF_RE.test(text)) return false;
 
-            // Signals we often see with this failure mode:
             const words = (text.match(/\S+/g) || []).length;
             const shortGeneric = words <= 7;
             const weSawNoSpeech = !this._sawSpeech;
             const inSilenceNow = this.vad?.state === 'silence';
 
-            // Optional meta from backend (use if present)
             const noSpeechProb = (meta && typeof meta.no_speech_prob === 'number') ? meta.no_speech_prob : null;
             const lowConf = (noSpeechProb !== null && noSpeechProb > 0.6) ||
                 (meta && typeof meta.avg_logprob === 'number' && meta.avg_logprob < -1.0) ||
