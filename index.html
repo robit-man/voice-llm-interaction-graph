@@ -667,12 +667,19 @@
             clear() { this.wires.length = 0; CFG.wires = []; saveCFG(); this.render() }
         };
 
-        /* ======== ASR ======== */
-        /* ======== ASR ======== */
+        /* ======== ASR (always-on VAD; lazy session start) ======== */
         const ASR = {
+            // capture + vad graph
             running: false, ac: null, node: null, media: null, source: null,
-            bufF32: new Float32Array(0), out: 0, sid: null,
+            // uplink buffers
+            bufF32: new Float32Array(0), out: 0,
+            // live session
+            sid: null, _startingSid: false,
 
+            // sticky cfg for lazy session start
+            _rate: 16000, _chunk: 120, _viaNkn: false, _base: '', _api: '', _relay: '', _live: true,
+
+            // speech bookkeeping
             _sawSpeech: false,
             finalizing: false,
             _vadWatch: null,
@@ -681,17 +688,14 @@
             _DEDUP_MS: 1500,
             _lastFinal: { text: '', at: 0 },
 
-            // VAD state
+            // VAD state (always-on)
             vad: { ema: 0, state: 'silence', lastVoice: 0, lastSilence: 0 },
 
             // phrase stream aggregator
             aggr: { prev: '', pend: '', pendStart: 0, lastChange: 0, lastEmit: 0 },
 
             // model refresh cadence
-            models: [],
-            _timer: null,
-            _slow: 180000,
-            _fast: 30000,
+            models: [], _timer: null, _slow: 180000, _fast: 30000,
 
             // ─────────────────────────────────────────────────────────────
             // VAD-gated uplink & pre-roll ring buffer + linger
@@ -710,10 +714,6 @@
             _ignorePartials: false,
             _silenceSince: 0,
 
-            // session roll helpers
-            _autoEndSid: null,
-            _restartFlag: false,
-
             // timing knobs
             _lingerMs: 700,         // wait this long after last POST/partial before /end
             _minTailMs: 350,        // minimum post-silence tail
@@ -721,19 +721,17 @@
 
             // AFTER-FINAL cleanup (only for the session that produced the final)
             _afterFinalCleanupForSid(expectedSid) {
-                // clear partial & phrases only for the session that just finalized
                 const p = qs('#asrPartial'); if (p) p.textContent = '';
                 const ph = qs('#asrPhrases'); if (ph) ph.textContent = '';
                 this.resetAggr();
                 this._sawPartialForUplink = false;
-                // do NOT clear finals here
+                // keep Finals
             },
 
             // ===== model discovery =====
             async _probeModels() {
                 const viaNkn = CFG.transport === 'nkn';
                 const base = CFG.asr.base, relay = CFG.asr.relay, api = CFG.asr.api;
-
                 const normalize = (data) => {
                     const pick = (arr) => arr.map(m =>
                         typeof m === 'string' ? m : (m && (m.name || m.model || m.id || m.tag)) || ''
@@ -745,13 +743,11 @@
                     if (Array.isArray(data.data)) return pick(data.data);
                     return [];
                 };
-
                 try {
                     const data = await Net.getJSON(base, '/models', api, viaNkn, relay);
                     const arr = normalize(data);
                     return { arr, current: data?.current || {} };
                 } catch { }
-
                 for (const p of ['/api/models', '/whisper/models', '/recognize/models']) {
                     try {
                         const resp = await Net.getJSON(base, p, api, viaNkn, relay);
@@ -766,24 +762,17 @@
                 try {
                     const { arr, current } = await this._probeModels();
                     this.models = arr;
-
-                    const dl = qs('#asrModelList'); if (dl) {
-                        dl.innerHTML = '';
-                        arr.forEach(n => { const o = document.createElement('option'); o.value = n; dl.appendChild(o); });
-                    }
-
+                    const dl = qs('#asrModelList'); if (dl) { dl.innerHTML = ''; arr.forEach(n => { const o = document.createElement('option'); o.value = n; dl.appendChild(o); }); }
                     const prefer = current.full || current.preview || '';
                     const want = (prefer && arr.includes(prefer)) ? prefer
                         : (CFG.asr.model && arr.includes(CFG.asr.model)) ? CFG.asr.model
                             : (arr[0] || '');
-
                     CFG.asr.model = want;
                     const inp = qs('#asrModel'); if (inp) inp.value = want;
                     const meta = qs('#asrMeta'); if (meta) meta.textContent = arr.length ? `ASR models: ${arr.join(', ')}` : '—';
                     saveCFG();
-                } catch (e) {
-                    log('[asr] models ' + (e?.message || e));
-                } finally {
+                } catch (e) { log('[asr] models ' + (e?.message || e)); }
+                finally {
                     clearTimeout(this._timer);
                     const healthy = this.models.length > 0;
                     this._timer = setTimeout(() => this.refreshModels(), healthy ? this._slow : this._fast);
@@ -791,10 +780,29 @@
             },
 
             // ===== tiny utils =====
-            pushF32(f32) { const a = this.bufF32, b = f32; const out = new Float32Array(a.length + b.length); out.set(a, 0); out.set(b, a.length); this.bufF32 = out; const el = qs('#asrBuf'); if (el) el.textContent = String(out.length) },
-            drainF32(n) { const a = this.bufF32; const take = Math.min(a.length, n); const head = a.subarray(0, take); this.bufF32 = a.subarray(take).slice(0); const el = qs('#asrBuf'); if (el) el.textContent = String(this.bufF32.length); return head },
+            pushF32(f32) {
+                const a = this.bufF32, b = f32; const out = new Float32Array(a.length + b.length);
+                out.set(a, 0); out.set(b, a.length); this.bufF32 = out;
+                const el = qs('#asrBuf'); if (el) el.textContent = String(out.length);
+            },
+            drainF32(n) {
+                const a = this.bufF32;
+                const take = Math.min(a.length, n);
+                const head = a.subarray(0, take);
+                this.bufF32 = a.subarray(take).slice(0);
+                const el = qs('#asrBuf'); if (el) el.textContent = String(this.bufF32.length);
+                return head;
+            },
             vu(p) { const el = qs('#asrVu'); if (el) el.style.width = Math.max(0, Math.min(100, Math.round(p * 150))) + '%' },
-            resample(f, fr, tr) { if (fr === tr) return f.slice(0); const r = tr / fr, L = Math.round(f.length * r), o = new Float32Array(L); for (let i = 0; i < L; i++) { const pos = i / r, i0 = Math.floor(pos), i1 = Math.min(i0 + 1, f.length - 1), t = pos - i0; o[i] = f[i0] * (1 - t) + f[i1] * t } return o },
+            resample(f, fr, tr) {
+                if (fr === tr) return f.slice(0);
+                const r = tr / fr, L = Math.round(f.length * r), o = new Float32Array(L);
+                for (let i = 0; i < L; i++) {
+                    const pos = i / r, i0 = Math.floor(pos), i1 = Math.min(i0 + 1, f.length - 1), t = pos - i0;
+                    o[i] = f[i0] * (1 - t) + f[i1] * t;
+                }
+                return o;
+            },
             i16(f32) { const o = new Int16Array(f32.length); for (let i = 0; i < f32.length; i++) { const v = Math.max(-1, Math.min(1, f32[i])); o[i] = v < 0 ? v * 0x8000 : v * 0x7FFF } return new Uint8Array(o.buffer) },
             setState(txt, cls = 'ok') { const s = qs('#asrState'); const d = qs('#asrDot'); if (s) s.textContent = txt; if (d) d.className = 'dot ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : 'warn') },
             printPartial(t) { const el = qs('#asrPartial'); if (el) el.textContent = t || ''; Router.send('asr:partial', { type: 'text', text: t || '' }) },
@@ -880,14 +888,9 @@
                 this.aggr.prev = text;
             },
 
-            // preroll
-            _preInit(rate) {
-                this._preMaxSamples = Math.max(1, Math.round(rate * (this._preMs / 1000)));
-                this._preSamples = 0;
-                this._preChunks = [];
-            },
+            // ── preroll ring buffer ──
+            _preInit(rate) { this._preMaxSamples = Math.max(1, Math.round(rate * (this._preMs / 1000))); this._preSamples = 0; this._preChunks = []; },
             _prePush(f32) {
-                // keep ring at target rate regardless of uplink state
                 this._preChunks.push(f32);
                 this._preSamples += f32.length;
                 while (this._preSamples > this._preMaxSamples && this._preChunks.length) {
@@ -895,12 +898,9 @@
                     this._preSamples -= drop.length;
                 }
             },
-            _preFlushToSend() {
-                for (const ch of this._preChunks) this.pushF32(ch);
-                this._preChunks = [];
-                this._preSamples = 0;
-            },
+            _preFlushToSend() { for (const ch of this._preChunks) this.pushF32(ch); this._preChunks = []; this._preSamples = 0; },
 
+            // ── uplink gating ──
             _openUplink(now, tailMs, currentBlockF32) {
                 if (this._uplinkOn) return;
                 this._uplinkOn = true;
@@ -908,34 +908,53 @@
                 this._lastPartialAt = 0;
                 this._ignorePartials = false; // allow partials while speaking
                 this._tailDeadline = now + tailMs;
-                // send pre-roll, then this voice block
                 this._preFlushToSend();
                 if (currentBlockF32) this.pushF32(currentBlockF32);
             },
             _extendTail(now, tailMs) { this._tailDeadline = now + tailMs; },
-
             _closeUplinkAndMaybeFinalize() {
                 if (!this._uplinkOn) return;
                 this._uplinkOn = false;
                 this._ignorePartials = true;   // drop late partials now
-                // Drain any queued audio (already buffered) and then /end
                 this._drainAndEnd().catch(e => log('[asr] finalize(gate) ' + (e?.message || e)));
             },
 
-            // === drain pending audio and respect linger before /end ===
+            // ── start a live session lazily (without touching mic/VAD) ──
+            async _ensureLiveSession() {
+                if (!this._live) return;
+                if (this.sid || this._startingSid || !this.running) return;
+                this._startingSid = true;
+                try {
+                    const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
+                    const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
+                    const body = Object.assign({}, prompt ? { prompt } : {}, model ? { model } : {}, {
+                        temperature: 0.0, condition_on_previous_text: false, no_speech_threshold: 0.6, logprob_threshold: -1.0
+                    });
+                    const data = await Net.postJSON(this._base, '/recognize/stream/start', body, this._api, this._viaNkn, this._relay, 45000);
+                    this.sid = (data && (data.sid || data.id || data.session)) || null;
+                    if (!this.sid) throw new Error('no sid');
+
+                    const thisSid = this.sid;
+                    this.openEvents(thisSid, this._viaNkn, this._base, this._relay, this._api).catch(() => { });
+                    // start uplink loop if not already
+                    this.flushLoop(this._rate, this._chunk, this._viaNkn, this._base, this._relay, this._api).catch(() => { });
+                    this.setState('streaming', 'ok');
+                } catch (e) {
+                    log('[asr] start(lazy) ' + (e?.message || e));
+                } finally {
+                    this._startingSid = false;
+                }
+            },
+
+            // === drain pending audio and /end the session (but keep mic + VAD alive) ===
             async _drainAndEnd() {
                 if (this.finalizing || !this.sid) return;
                 this.finalizing = true;
 
-                const viaNkn = CFG.transport === 'nkn';
-                const base = CFG.asr.base;
-                const relay = CFG.asr.relay;
-                const api = CFG.asr.api;
-
                 const oldSid = this.sid;
                 this._autoEndSid = oldSid;
                 this.setState('finalizing…', 'warn');
-                this._ignorePartials = true; // hard stop accepting partials
+                this._ignorePartials = true;
 
                 const softDeadline = performance.now() + Math.max(900, this._lingerMs + 600);
                 while (performance.now() < softDeadline) {
@@ -947,79 +966,43 @@
                     await new Promise(r => setTimeout(r, 12));
                 }
 
-                // stop mic now (prevents more partials after /end)
-                try { this.node && this.node.disconnect(); } catch { }
-                try { this.source && this.source.disconnect(); } catch { }
-                try { this.media && this.media.getTracks().forEach(t => t.stop()); } catch { }
-                try { this.ac && this.ac.close(); } catch { }
-                this.node = this.source = this.media = this.ac = null;
-                this.running = false;
-
+                // IMPORTANT: do NOT stop mic/audio graph here.
                 try {
-                    const resp = await Net.postJSON(
-                        base,
-                        `/recognize/stream/${encodeURIComponent(oldSid)}/end`,
-                        {},
-                        api, viaNkn, relay, 20000
-                    );
-
-                    // Fallback: some servers return final in JSON payload of /end
+                    const resp = await Net.postJSON(this._base, `/recognize/stream/${encodeURIComponent(oldSid)}/end`, {}, this._api, this._viaNkn, this._relay, 20000);
                     const finalText =
-                        resp?.final?.text ||
-                        resp?.final?.result?.text ||
-                        resp?.text ||
-                        resp?.result?.text || '';
-
+                        resp?.final?.text || resp?.final?.result?.text ||
+                        resp?.text || resp?.result?.text || '';
                     if (finalText) {
                         this.handleFinalFlush(finalText);
-                        this.appendFinal(finalText);                // emits eos:true downstream
+                        this.appendFinal(finalText);
                         setTimeout(() => this._afterFinalCleanupForSid(oldSid), 0);
                     }
                 } catch (e) {
                     log('[asr] finalize-live ' + (e?.message || e));
                 } finally {
+                    // return to listening idle; session closed
+                    this.sid = null;
                     this.finalizing = false;
+                    this.setState('listening', 'ok');
                 }
             },
 
             async _finalizeLiveAndRestart() {
-                if (this.finalizing) return;
-                const oldSid = this.sid;
-                if (!oldSid) return;
-                this.finalizing = true;
-
-                const viaNkn = CFG.transport === 'nkn';
-                const base = CFG.asr.base;
-                const relay = CFG.asr.relay;
-                const api = CFG.asr.api;
-
-                this._autoEndSid = oldSid;
-                this.sid = null;
-                clearInterval(this._vadWatch); this._vadWatch = null;
-
-                try { this.node && this.node.disconnect(); } catch { }
-                try { this.source && this.source.disconnect(); } catch { }
-                try { this.media && this.media.getTracks().forEach(t => t.stop()); } catch { }
-                try { this.ac && this.ac.close(); } catch { }
-                this.node = this.source = this.media = this.ac = null;
-                this.running = false;
-                this.setState('finalizing…', 'warn');
-
-                try { await Net.postJSON(base, `/recognize/stream/${encodeURIComponent(oldSid)}/end`, {}, api, viaNkn, relay, 20000); }
-                catch (e) { log('[asr] finalize-live ' + (e?.message || e)); }
-                finally { this.finalizing = false; }
+                // kept for compatibility; now just ends current session and stays listening
+                return this._drainAndEnd();
             },
 
-            async _rollSessionOnSilence() { /* optional legacy path unchanged */ },
+            async _rollSessionOnSilence() { /* legacy noop */ },
 
             async start() {
                 if (this.running) return;
 
                 this._lastFinal = { text: '', at: 0 };
 
-                const rate = parseInt(qs('#asrRate')?.value || '16000', 10) || 16000;
-                const chunk = parseInt(qs('#asrChunk')?.value || '120', 10) || 120;
-                const live = (qs('#asrLive')?.value) === 'true';
+                // cache cfg for lazy start
+                this._rate = parseInt(qs('#asrRate')?.value || '16000', 10) || 16000;
+                this._chunk = parseInt(qs('#asrChunk')?.value || '120', 10) || 120;
+                this._live = (qs('#asrLive')?.value) === 'true';
                 const rmsTh = parseFloat(qs('#asrRms')?.value || '0.015') || 0.015;
                 const holdMs = parseInt(qs('#asrHold')?.value || '250', 10) || 250;
                 const emaMs = parseInt(qs('#asrEmaMs')?.value || '120', 10) || 120;
@@ -1028,10 +1011,10 @@
 
                 this._preMs = parseInt(qs('#asrPreMs')?.value || `${this._preMs}`, 10) || this._preMs;
 
-                const viaNkn = CFG.transport === 'nkn';
-                const base = CFG.asr.base;
-                const relay = CFG.asr.relay;
-                const api = CFG.asr.api;
+                this._viaNkn = CFG.transport === 'nkn';
+                this._base = CFG.asr.base;
+                this._relay = CFG.asr.relay;
+                this._api = CFG.asr.api;
 
                 this._autoEndSid = null;
                 const suppressReset = !!this._restartFlag;
@@ -1048,7 +1031,7 @@
                 this._lastPostAt = 0;
                 this._ignorePartials = false;
                 this._silenceSince = 0;
-                this._preInit(rate);
+                this._preInit(this._rate);
 
                 try {
                     this.ac = new (window.AudioContext || window.webkitAudioContext)();
@@ -1061,7 +1044,7 @@
                         ? this.ac.createScriptProcessor(2048, 1, 1)
                         : new ScriptProcessorNode(this.ac, { bufferSize: 2048, numberOfInputs: 1, numberOfOutputs: 1 }));
 
-                    const from = this.ac.sampleRate | 0 || rate;
+                    const from = this.ac.sampleRate | 0 || this._rate;
                     const bufDurMs = (this.node.bufferSize / from) * 1000;
                     const alpha = 1 - Math.exp(-bufDurMs / Math.max(emaMs, 1));
 
@@ -1084,21 +1067,24 @@
                         const now = performance.now();
                         const tailMs = tailBaseMs;
 
-                        const f32 = (from === rate) ? ch.slice(0) : this.resample(ch, from, rate);
-                        this._prePush(f32); // pre-roll always updated
+                        const f32 = (from === this._rate) ? ch.slice(0) : this.resample(ch, from, this._rate);
+                        this._prePush(f32); // pre-roll always updated (even when not streaming)
 
                         if (this.vad.state === 'silence') {
                             if (ema >= onTh) {
-                                // ENTER VOICE
+                                // ENTER VOICE → ensure session, then open uplink
                                 this.vad.state = 'voice';
                                 this.vad.lastVoice = now;
                                 this._sawSpeech = true;
                                 this._lastSpeechAt = now;
-                                this._ignorePartials = false;        // allow partials again
-                                // open uplink: send pre-roll + this block
-                                this._openUplink(now, tailMs, f32);
+                                this._ignorePartials = false;
+
+                                // lazily start a session only when we first detect voice
+                                this._ensureLiveSession().then(() => {
+                                    if (this.sid) this._openUplink(now, tailMs, f32);
+                                });
                             } else if (this._uplinkOn) {
-                                // Silent while uplink is open (tail waiting): DO NOT push silence.
+                                // silent while uplink open → don't push silence; check tail deadline
                                 if (now > this._tailDeadline) {
                                     const postQuiet = (now - this._lastPostAt) >= this._lingerMs;
                                     const partialQuiet = (!this._sawPartialForUplink) || ((now - this._lastPartialAt) >= this._lingerMs);
@@ -1114,33 +1100,31 @@
                                 this._lastSpeechAt = now;
                                 if (this._uplinkOn) { this._extendTail(now, tailMs); this.pushF32(f32); }
                             } else {
-                                // below off threshold → hangover
+                                // below off → hangover
                                 const sinceVoice = now - (this.vad.lastVoice || now);
                                 if (sinceVoice >= holdMs) {
                                     // EXIT VOICE → SILENCE
                                     this.vad.state = 'silence';
                                     this.vad.lastSilence = now;
                                     this._silenceSince = now;
-                                    this._ignorePartials = true;         // drop late/hallucinated partials
+                                    this._ignorePartials = true;
                                     if (this.aggr.pend) { this.addPhrase(this.aggr.pend.trim()); this.aggr.pend = ''; }
-                                    // IMPORTANT: do NOT push audio here; silence begins now
                                 } else {
-                                    // brief dip; still voice, but don't refresh lastVoice
                                     if (this._uplinkOn) this.pushF32(f32);
                                 }
                             }
                         }
 
-                        // UI meters
+                        // UI meters (always-on)
                         this.vu(ema);
                         const v = qs('#asrVad'); if (v) v.textContent = this.vad.state;
                         const rv = qs('#asrRmsVal'); if (rv) rv.textContent = ema.toFixed(3);
 
                         // BATCH: auto finalize on long silence
-                        if (!live) {
+                        if (!this._live) {
                             if (ema < offTh) {
                                 batchQuietSince = batchQuietSince ?? now;
-                                if (now - batchQuietSince >= silence) { batchQuietSince = null; this.finalizeOnce(rate).catch(() => { }); }
+                                if (now - batchQuietSince >= silence) { batchQuietSince = null; this.finalizeOnce(this._rate).catch(() => { }); }
                             } else { batchQuietSince = null; }
                         }
                     };
@@ -1149,7 +1133,7 @@
                     this.node.connect(this.ac.destination);
 
                     clearInterval(this._vadWatch);
-                    if (live) {
+                    if (this._live) {
                         // watchdog: if silent tail elapsed & no uploads/partials recently → finalize
                         this._vadWatch = setInterval(() => {
                             if (!this.sid || this.finalizing || !this._uplinkOn) return;
@@ -1160,7 +1144,7 @@
                             const partialQuiet = (!this._sawPartialForUplink) || ((now - this._lastPartialAt) >= this._lingerMs);
                             const hardQuiet = (now - Math.max(this._lastPostAt, this._lastPartialAt || 0)) >= this._forceQuietMaxMs;
                             if ((postQuiet && partialQuiet) || hardQuiet) this._closeUplinkAndMaybeFinalize();
-                        }, Math.max(50, Math.min(200, chunk)));
+                        }, Math.max(50, Math.min(200, this._chunk)));
                     }
                 } catch (e) {
                     this.setState('mic error', 'err');
@@ -1178,62 +1162,35 @@
 
                 this.running = true;
                 this.out = 0; const ao = qs('#asrOut'); if (ao) ao.textContent = '0';
-                this.setState(live ? 'streaming' : 'batch', 'warn');
-
-                if (live) {
-                    try {
-                        const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
-                        const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
-                        const body = Object.assign({}, prompt ? { prompt } : {}, model ? { model } : {}, {
-                            temperature: 0.0, condition_on_previous_text: false, no_speech_threshold: 0.6, logprob_threshold: -1.0
-                        });
-                        const data = await Net.postJSON(base, '/recognize/stream/start', body, api, viaNkn, relay, 45000);
-                        this.sid = (data && (data.sid || data.id || data.session)) || null;
-                        if (!this.sid) throw new Error('no sid');
-                    } catch (e) {
-                        this.setState('start fail', 'err');
-                        log('[asr] start ' + e.message);
-                        return;
-                    }
-
-                    const thisSid = this.sid;
-
-                    this.openEvents(thisSid, viaNkn, base, relay, api)
-                        .then(() => {
-                            if (this._autoEndSid === thisSid) {
-                                this._restartFlag = true;
-                                this._autoEndSid = null;
-                                setTimeout(() => {
-                                    if ((qs('#asrLive')?.value) === 'true') this.start();
-                                }, 120);
-                            }
-                        })
-                        .catch(() => { });
-
-                    this.flushLoop(rate, chunk, viaNkn, base, relay, api).catch(() => { });
-                } else {
-                    this.setState('ready (batch)', 'ok');
-                }
+                this.setState(this._live ? 'listening' : 'batch', 'warn'); // LISTENING until VAD starts a session
+                // NOTE: we do NOT create a session here; it will be created on voice.
             },
 
             async stop() {
                 if (!this.running) return; this.setState('stopping', 'warn');
                 this.running = false;
                 this._autoEndSid = null;
+
+                // close session if any
+                try {
+                    if (this.sid) await Net.postJSON(CFG.asr.base, `/recognize/stream/${encodeURIComponent(this.sid)}/end`, {}, CFG.asr.api, CFG.transport === 'nkn', CFG.asr.relay, 20000);
+                } catch { }
+
+                this.sid = null; this._uplinkOn = false;
+
                 try { this.node && this.node.disconnect() } catch { }
                 try { this.source && this.source.disconnect() } catch { }
                 try { this.media && this.media.getTracks().forEach(t => t.stop()) } catch { }
                 try { this.ac && this.ac.close() } catch { }
                 this.node = this.source = this.media = this.ac = null;
+
                 clearInterval(this._vadWatch); this._vadWatch = null;
                 this.bufF32 = new Float32Array(0);
-                this._uplinkOn = false;
                 this._preInit(parseInt(qs('#asrRate')?.value || '16000', 10) || 16000);
 
                 const ab = qs('#asrBuf'); if (ab) ab.textContent = '0';
                 const av = qs('#asrVad'); if (av) av.textContent = 'idle';
-                if (this.sid) { try { await Net.postJSON(CFG.asr.base, `/recognize/stream/${encodeURIComponent(this.sid)}/end`, {}, CFG.asr.api, CFG.transport === 'nkn', CFG.asr.relay, 20000) } catch { } }
-                this.sid = null; this.setState('idle', 'ok');
+                this.setState('idle', 'ok');
             },
 
             async finalizeOnce(rate) {
@@ -1261,16 +1218,8 @@
 
                         if (t === 'asr.partial' || t === 'partial') {
                             const text = obj.text || (obj.result && obj.result.text) || '';
-
-                            // Only accept partials when relevant to current live speaking
-                            const sameSid = (sid === this.sid) || !!this.sid;
-                            const ok =
-                                sameSid &&
-                                !this.finalizing &&
-                                this._uplinkOn &&
-                                this.vad.state === 'voice' &&
-                                !this._ignorePartials;
-
+                            const sameSid = (sid === this.sid);
+                            const ok = sameSid && !this.finalizing && this._uplinkOn && this.vad.state === 'voice' && !this._ignorePartials;
                             if (ok) {
                                 this.printPartial(text);
                                 this.handlePartialForPhrases(text);
@@ -1278,17 +1227,14 @@
                                     this._sawSpeech = true;
                                     this._lastSpeechAt = performance.now();
                                     this._sawPartialForUplink = true;
-                                    this._lastPartialAt = performance.now(); // ONLY refresh while speaking
+                                    this._lastPartialAt = performance.now();
                                 }
-                            } else {
-                                // drop late/hallucinated partials
                             }
                         } else if (t === 'asr.detected' || t === 'detected') {
                             const s = obj.text || (obj.result && obj.result.text) || '';
                             if (s) {
                                 const meta = (obj.result && obj.result) || obj;
                                 if (!ASR.shouldDropAsHallucination(s, meta)) this.addPhrase(s);
-                                else log('[asr] suppressed hallucinated sign-off (detected): "' + s + '"');
                             }
                         } else if (t === 'asr.final' || t === 'final') {
                             const s = (obj.result && obj.result.text) || obj.text || '';
@@ -1297,11 +1243,10 @@
                                 if (ASR.shouldDropAsHallucination(s, meta)) {
                                     log('[asr] dropped probable hallucinated sign-off: "' + s + '"');
                                 } else {
-                                    this._ignorePartials = true;     // freeze partials post-final
-                                    // ORDER: emit final → flush phrases → clear UI (deferred)
-                                    this.appendFinal(s);              // Router 'asr:final' (eos:true)
-                                    this.handleFinalFlush(s);         // push any leftover phrase deltas
-                                    setTimeout(() => this._afterFinalCleanupForSid(sid), 0); // clear partials & phrases after final is out
+                                    this._ignorePartials = true;
+                                    this.appendFinal(s);
+                                    this.handleFinalFlush(s);
+                                    setTimeout(() => this._afterFinalCleanupForSid(sid), 0);
                                 }
                             }
                         } else if (t === 'error') {
@@ -1323,7 +1268,7 @@
                             onChunk: (bytes) => pump(bytes),
                             onEnd: () => {
                                 const e = qs('#asrEvt'); if (e) e.textContent = 'ended';
-                                clearInterval(ASR._vadWatch); ASR._vadWatch = null;
+                                // DO NOT stop VAD/watchdog here; we remain listening.
                             }
                         }
                     );
@@ -1334,14 +1279,14 @@
                     const reader = r.body.getReader();
                     while (true) { const { value, done } = await reader.read(); if (done) break; if (value && value.byteLength) pump(value) }
                     const ed = qs('#asrEvt'); if (ed) ed.textContent = 'ended';
-                    clearInterval(ASR._vadWatch); ASR._vadWatch = null;
+                    // Keep listening; do not clear watchdog.
                 }
             },
 
             async flushLoop(rate, chunk, viaNkn, base, relay, api) {
                 const need = () => Math.round(rate * (chunk / 1000));
                 while (this.running && this.sid) {
-                    if (this.bufF32.length >= need() && this.out < 4) {
+                    if (this.bufF32.length >= need() && this.out < 4 && this._uplinkOn) {
                         const f32 = this.drainF32(need());
                         const bytes = this.i16(f32);
                         const url = base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(this.sid)}/audio?format=pcm16&sr=${rate}`;
@@ -1376,9 +1321,6 @@
                 return shortGeneric && (weSawNoSpeech || inSilenceNow || lowConf);
             }
         };
-
-
-
 
 
 
