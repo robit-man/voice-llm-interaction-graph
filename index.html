@@ -320,9 +320,9 @@
                 </select>
 
                 <!-- VAD -->
-                <label>VAD Thresh</label><input id="asrRms" type="number" step="0.001" value="0.015" />
-                <label>VAD Hangover (ms)</label><input id="asrHold" type="number" value="250" />
-                <label>EMA Window (ms)</label><input id="asrEmaMs" type="number" value="120" />
+                <label>VAD Thresh</label><input id="asrRms" type="number" step="0.001" value="0.020" />
+                <label>VAD Hangover (ms)</label><input id="asrHold" type="number" value="300" />
+                <label>EMA Window (ms)</label><input id="asrEmaMs" type="number" value="100" />
 
                 <!-- phrase streaming -->
                 <label>Phrase Stream</label><select id="asrPhraseOn">
@@ -333,7 +333,7 @@
                 <label>Stable (ms)</label><input id="asrPhraseStable" type="number" value="350" />
 
                 <!-- batch-only silence -->
-                <label>Silence End (ms)</label><input id="asrSilence" type="number" value="900" />
+                <label>Silence End (ms)</label><input id="asrSilence" type="number" value="1100" />
 
                 <!-- prompt -->
                 <label>Prompt</label>
@@ -448,6 +448,15 @@
     </main>
 
     <script>
+        // --- Anti-signoff defaults ---
+        const ASR_DEFAULT_PROMPT =
+            "Context: live interactive conversation, not a video or broadcast. " +
+            "Transcribe exactly what is spoken. Do not add generic media sign-offs. " +
+            "Avoid phrases such as: \"thanks for watching\", \"like and subscribe\", " +
+            "\"don't forget to subscribe\", \"link in the description\".";
+
+        const SIGNOFF_RE = /\b(thanks(?:,)?\s+for\s+(?:watching|listening)|(?:don['’]t\s+forget\s+to\s+)?(?:like|subscribe)|like\s+and\s+subscribe|link\s+in\s+(?:the\s+)?description)\b/i;
+
         /* ======== tiny helpers ======== */
         const LS = { get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } }, set(k, v) { localStorage.setItem(k, JSON.stringify(v)) } };
         const qs = s => document.querySelector(s); const qsa = s => Array.from(document.querySelectorAll(s));
@@ -1771,13 +1780,20 @@
         /* boot */
         function init() {
             bindUI(); bindPorts();
+            if (!CFG.asr.prompt || !CFG.asr.prompt.trim()) {
+                CFG.asr.prompt = ASR_DEFAULT_PROMPT;
+                const p = qs('#asrPrompt'); if (p) p.value = CFG.asr.prompt;
+                saveCFG();
+            }
             if (CFG.transport === 'nkn') Net.ensureNkn();
             setBadge('Ready');
             ASR.refreshModels();
             LLM.refreshModels();
             TTS.refreshModels();
-            const wb = qs('#wiresBox'); if (wb) wb.textContent = CFG.wires.length ? CFG.wires.map((w, i) => `${i + 1}. ${w.from} → ${w.to}`).join('\n') : '(no wires)';
+            const wb = qs('#wiresBox');
+            if (wb) wb.textContent = CFG.wires.length ? CFG.wires.map((w, i) => `${i + 1}. ${w.from} → ${w.to}`).join('\n') : '(no wires)';
         }
+
         document.addEventListener('DOMContentLoaded', init);
     </script>
 
