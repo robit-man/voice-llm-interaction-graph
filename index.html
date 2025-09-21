@@ -668,6 +668,7 @@
         };
 
         /* ======== ASR ======== */
+        /* ======== ASR ======== */
         const ASR = {
             running: false, ac: null, node: null, media: null, source: null,
             bufF32: new Float32Array(0), out: 0, sid: null,
@@ -705,6 +706,14 @@
             _lastPartialAt: 0,
             _lastPostAt: 0,
 
+            // gating for late partials & silence tracking
+            _ignorePartials: false,
+            _silenceSince: 0,
+
+            // session roll helpers
+            _autoEndSid: null,
+            _restartFlag: false,
+
             // timing knobs
             _lingerMs: 700,         // wait this long after last POST/partial before /end
             _minTailMs: 350,        // minimum post-silence tail
@@ -718,45 +727,6 @@
                 this.resetAggr();
                 this._sawPartialForUplink = false;
                 // do NOT clear finals here
-            },
-
-            _preInit(rate) {
-                this._preMaxSamples = Math.max(1, Math.round(rate * (this._preMs / 1000)));
-                this._preSamples = 0;
-                this._preChunks = [];
-            },
-            _prePush(f32) {
-                // keep ring at target rate regardless of uplink state
-                this._preChunks.push(f32);
-                this._preSamples += f32.length;
-                while (this._preSamples > this._preMaxSamples && this._preChunks.length) {
-                    const drop = this._preChunks.shift();
-                    this._preSamples -= drop.length;
-                }
-            },
-            _preFlushToSend() {
-                for (const ch of this._preChunks) this.pushF32(ch);
-                this._preChunks = [];
-                this._preSamples = 0;
-            },
-
-            _openUplink(now, tailMs, currentBlockF32) {
-                if (this._uplinkOn) return;
-                this._uplinkOn = true;
-                this._sawPartialForUplink = false;
-                this._lastPartialAt = 0;
-                this._tailDeadline = now + tailMs;
-                // send pre-roll, then this voice block
-                this._preFlushToSend();
-                if (currentBlockF32) this.pushF32(currentBlockF32);
-            },
-            _extendTail(now, tailMs) { this._tailDeadline = now + tailMs; },
-
-            _closeUplinkAndMaybeFinalize() {
-                if (!this._uplinkOn) return;
-                this._uplinkOn = false;
-                // Drain any queued audio (already buffered) and then /end
-                this._drainAndEnd().catch(e => log('[asr] finalize(gate) ' + (e?.message || e)));
             },
 
             // ===== model discovery =====
@@ -844,7 +814,7 @@
                 this._lastFinal.text = s; this._lastFinal.at = now;
                 const box = qs('#asrFinals');
                 if (box) { box.textContent = (box.textContent ? box.textContent + '\n' : '') + s; box.scrollTop = box.scrollHeight; }
-                Router.send('asr:final', { type: 'text', text: s, eos: true }); // eos=true for downstream flush
+                Router.send('asr:final', { type: 'text', text: s, eos: true });
             },
 
             ssePump(onEvent) {
@@ -910,6 +880,48 @@
                 this.aggr.prev = text;
             },
 
+            // preroll
+            _preInit(rate) {
+                this._preMaxSamples = Math.max(1, Math.round(rate * (this._preMs / 1000)));
+                this._preSamples = 0;
+                this._preChunks = [];
+            },
+            _prePush(f32) {
+                // keep ring at target rate regardless of uplink state
+                this._preChunks.push(f32);
+                this._preSamples += f32.length;
+                while (this._preSamples > this._preMaxSamples && this._preChunks.length) {
+                    const drop = this._preChunks.shift();
+                    this._preSamples -= drop.length;
+                }
+            },
+            _preFlushToSend() {
+                for (const ch of this._preChunks) this.pushF32(ch);
+                this._preChunks = [];
+                this._preSamples = 0;
+            },
+
+            _openUplink(now, tailMs, currentBlockF32) {
+                if (this._uplinkOn) return;
+                this._uplinkOn = true;
+                this._sawPartialForUplink = false;
+                this._lastPartialAt = 0;
+                this._ignorePartials = false; // allow partials while speaking
+                this._tailDeadline = now + tailMs;
+                // send pre-roll, then this voice block
+                this._preFlushToSend();
+                if (currentBlockF32) this.pushF32(currentBlockF32);
+            },
+            _extendTail(now, tailMs) { this._tailDeadline = now + tailMs; },
+
+            _closeUplinkAndMaybeFinalize() {
+                if (!this._uplinkOn) return;
+                this._uplinkOn = false;
+                this._ignorePartials = true;   // drop late partials now
+                // Drain any queued audio (already buffered) and then /end
+                this._drainAndEnd().catch(e => log('[asr] finalize(gate) ' + (e?.message || e)));
+            },
+
             // === drain pending audio and respect linger before /end ===
             async _drainAndEnd() {
                 if (this.finalizing || !this.sid) return;
@@ -923,6 +935,7 @@
                 const oldSid = this.sid;
                 this._autoEndSid = oldSid;
                 this.setState('finalizing…', 'warn');
+                this._ignorePartials = true; // hard stop accepting partials
 
                 const softDeadline = performance.now() + Math.max(900, this._lingerMs + 600);
                 while (performance.now() < softDeadline) {
@@ -934,7 +947,7 @@
                     await new Promise(r => setTimeout(r, 12));
                 }
 
-                // stop mic now (prevents more partials arriving after we /end)
+                // stop mic now (prevents more partials after /end)
                 try { this.node && this.node.disconnect(); } catch { }
                 try { this.source && this.source.disconnect(); } catch { }
                 try { this.media && this.media.getTracks().forEach(t => t.stop()); } catch { }
@@ -943,7 +956,25 @@
                 this.running = false;
 
                 try {
-                    await Net.postJSON(base, `/recognize/stream/${encodeURIComponent(oldSid)}/end`, {}, api, viaNkn, relay, 20000);
+                    const resp = await Net.postJSON(
+                        base,
+                        `/recognize/stream/${encodeURIComponent(oldSid)}/end`,
+                        {},
+                        api, viaNkn, relay, 20000
+                    );
+
+                    // Fallback: some servers return final in JSON payload of /end
+                    const finalText =
+                        resp?.final?.text ||
+                        resp?.final?.result?.text ||
+                        resp?.text ||
+                        resp?.result?.text || '';
+
+                    if (finalText) {
+                        this.handleFinalFlush(finalText);
+                        this.appendFinal(finalText);                // emits eos:true downstream
+                        setTimeout(() => this._afterFinalCleanupForSid(oldSid), 0);
+                    }
                 } catch (e) {
                     log('[asr] finalize-live ' + (e?.message || e));
                 } finally {
@@ -1015,6 +1046,8 @@
                 this._sawPartialForUplink = false;
                 this._lastPartialAt = 0;
                 this._lastPostAt = 0;
+                this._ignorePartials = false;
+                this._silenceSince = 0;
                 this._preInit(rate);
 
                 try {
@@ -1061,11 +1094,11 @@
                                 this.vad.lastVoice = now;
                                 this._sawSpeech = true;
                                 this._lastSpeechAt = now;
+                                this._ignorePartials = false;        // allow partials again
                                 // open uplink: send pre-roll + this block
                                 this._openUplink(now, tailMs, f32);
                             } else if (this._uplinkOn) {
-                                // We're silent while uplink is open (tail waiting).
-                                // DO NOT push any audio during silence (cut to silence).
+                                // Silent while uplink is open (tail waiting): DO NOT push silence.
                                 if (now > this._tailDeadline) {
                                     const postQuiet = (now - this._lastPostAt) >= this._lingerMs;
                                     const partialQuiet = (!this._sawPartialForUplink) || ((now - this._lastPartialAt) >= this._lingerMs);
@@ -1087,6 +1120,8 @@
                                     // EXIT VOICE → SILENCE
                                     this.vad.state = 'silence';
                                     this.vad.lastSilence = now;
+                                    this._silenceSince = now;
+                                    this._ignorePartials = true;         // drop late/hallucinated partials
                                     if (this.aggr.pend) { this.addPhrase(this.aggr.pend.trim()); this.aggr.pend = ''; }
                                     // IMPORTANT: do NOT push audio here; silence begins now
                                 } else {
@@ -1115,7 +1150,7 @@
 
                     clearInterval(this._vadWatch);
                     if (live) {
-                        // watchdog: if silent tail has elapsed & no uploads/partials recently → finalize
+                        // watchdog: if silent tail elapsed & no uploads/partials recently → finalize
                         this._vadWatch = setInterval(() => {
                             if (!this.sid || this.finalizing || !this._uplinkOn) return;
                             const now = performance.now();
@@ -1226,13 +1261,27 @@
 
                         if (t === 'asr.partial' || t === 'partial') {
                             const text = obj.text || (obj.result && obj.result.text) || '';
-                            this.printPartial(text);
-                            this.handlePartialForPhrases(text);
-                            if (text) {
-                                this._sawSpeech = true;
-                                this._lastSpeechAt = performance.now();
-                                this._sawPartialForUplink = true;
-                                this._lastPartialAt = performance.now();
+
+                            // Only accept partials when relevant to current live speaking
+                            const sameSid = (sid === this.sid) || !!this.sid;
+                            const ok =
+                                sameSid &&
+                                !this.finalizing &&
+                                this._uplinkOn &&
+                                this.vad.state === 'voice' &&
+                                !this._ignorePartials;
+
+                            if (ok) {
+                                this.printPartial(text);
+                                this.handlePartialForPhrases(text);
+                                if (text) {
+                                    this._sawSpeech = true;
+                                    this._lastSpeechAt = performance.now();
+                                    this._sawPartialForUplink = true;
+                                    this._lastPartialAt = performance.now(); // ONLY refresh while speaking
+                                }
+                            } else {
+                                // drop late/hallucinated partials
                             }
                         } else if (t === 'asr.detected' || t === 'detected') {
                             const s = obj.text || (obj.result && obj.result.text) || '';
@@ -1248,6 +1297,7 @@
                                 if (ASR.shouldDropAsHallucination(s, meta)) {
                                     log('[asr] dropped probable hallucinated sign-off: "' + s + '"');
                                 } else {
+                                    this._ignorePartials = true;     // freeze partials post-final
                                     // ORDER: emit final → flush phrases → clear UI (deferred)
                                     this.appendFinal(s);              // Router 'asr:final' (eos:true)
                                     this.handleFinalFlush(s);         // push any leftover phrase deltas
@@ -1326,6 +1376,7 @@
                 return shortGeneric && (weSawNoSpeech || inSilenceNow || lowConf);
             }
         };
+
 
 
 
