@@ -12,7 +12,7 @@
   </a>
 </p>
 
-<img width="1869" height="1059" alt="image" src="https://github.com/user-attachments/assets/b7fb7991-22fc-4c63-8716-c01aafcc12f5" />
+<img width="1886" height="1261" alt="image" src="https://github.com/user-attachments/assets/a763f0bf-652e-4a83-a4f2-51cc1c3682b0" />
 
 
 This frontend is a **full, resilient, browser-only control surface** for three services and an end-to-end voice assistant:
