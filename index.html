@@ -371,31 +371,71 @@
         <!-- LLM -->
         <section class="card span-4" id="llmCard">
             <h2>LLM (Ollama)</h2>
+
             <div class="kv">
                 <label>Base URL</label><input id="llmBase" placeholder="http://127.0.0.1:11434" />
                 <label>NKN Relay</label><input id="llmRelay" placeholder="(full NKN address)" />
                 <label>API Key</label><input id="llmApi" placeholder="(optional)" />
                 <label>Model</label><select id="llmModel"></select>
-                <label>Stream</label><select id="llmStream">
+                <label>Stream</label>
+                <select id="llmStream">
                     <option value="true" selected>true</option>
                     <option value="false">false</option>
                 </select>
             </div>
+
+            <!-- System & Memory controls -->
+            <div class="kv" style="margin-top:8px;">
+                <label>Use System Message</label>
+                <select id="llmUseSystem">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                </select>
+
+                <label>Use Chat Memory</label>
+                <select id="llmMemory">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                </select>
+
+                <label>Persist Memory</label>
+                <select id="llmPersistMemory">
+                    <option value="false" selected>false</option>
+                    <option value="true">true</option>
+                </select>
+
+                <label>Max Turns</label>
+                <input id="llmMaxTurns" type="number" min="1" step="1" placeholder="16" />
+            </div>
+
+            <div class="row" style="margin-top:8px;">
+                <label style="width:100%; display:block; margin-bottom:4px;">System Prompt</label>
+                <textarea id="llmSystem" rows="3" placeholder="(optional system message)"
+                    style="width:100%;"></textarea>
+            </div>
+
             <div class="row" style="margin-top:8px;">
                 <button id="llmRefresh">Refresh Models</button>
+                <button id="llmClearMemory" class="secondary">Clear Memory</button>
                 <span class="pill"><span class="dot warn" id="llmDot"></span><b id="llmState">idle</b></span>
                 <span class="pill">tokens:<b id="llmTok">0</b></span>
                 <span class="pill">bytes:<b id="llmBytes">0</b></span>
                 <span class="pill">elapsed:<b id="llmMs">0ms</b></span>
+                <span class="pill">memory:<b id="llmMemSize">0</b></span>
             </div>
+
             <div class="row" style="margin-top:6px;">
                 <span class="port" data-port="llm:prompt">in · prompt</span>
                 <span class="port" data-port="llm:delta">out · delta</span>
                 <span class="port" data-port="llm:final">out · final</span>
+                <!-- optional, if you want to listen for memory updates you already emit -->
+                <span class="port" data-port="llm:memory">out · memory</span>
             </div>
+
             <div class="muted" style="margin-top:8px;">Streaming tokens</div>
             <div id="llmTokens" class="code" style="min-height:80px"></div>
         </section>
+
 
         <!-- TTS -->
         <section class="card span-4" id="ttsCard">
@@ -666,14 +706,13 @@
             _lastPostAt: 0,
 
             // timing knobs
-            _lingerMs: 700,        // wait this long after last POST/partial before /end
-            _minTailMs: 350,       // minimum post-silence tail
-            _forceQuietMaxMs: 2800,// hard cap: force finalize if quiet this long
+            _lingerMs: 700,         // wait this long after last POST/partial before /end
+            _minTailMs: 350,        // minimum post-silence tail
+            _forceQuietMaxMs: 2800, // hard cap: force finalize if quiet this long
 
             // AFTER-FINAL cleanup (only for the session that produced the final)
             _afterFinalCleanupForSid(expectedSid) {
                 // clear partial & phrases only for the session that just finalized
-                // (it's fine if expectedSid !== this.sid because we may have already rolled)
                 const p = qs('#asrPartial'); if (p) p.textContent = '';
                 const ph = qs('#asrPhrases'); if (ph) ph.textContent = '';
                 this.resetAggr();
@@ -687,6 +726,7 @@
                 this._preChunks = [];
             },
             _prePush(f32) {
+                // keep ring at target rate regardless of uplink state
                 this._preChunks.push(f32);
                 this._preSamples += f32.length;
                 while (this._preSamples > this._preMaxSamples && this._preChunks.length) {
@@ -706,6 +746,7 @@
                 this._sawPartialForUplink = false;
                 this._lastPartialAt = 0;
                 this._tailDeadline = now + tailMs;
+                // send pre-roll, then this voice block
                 this._preFlushToSend();
                 if (currentBlockF32) this.pushF32(currentBlockF32);
             },
@@ -714,6 +755,7 @@
             _closeUplinkAndMaybeFinalize() {
                 if (!this._uplinkOn) return;
                 this._uplinkOn = false;
+                // Drain any queued audio (already buffered) and then /end
                 this._drainAndEnd().catch(e => log('[asr] finalize(gate) ' + (e?.message || e)));
             },
 
@@ -1010,58 +1052,56 @@
                         const tailMs = tailBaseMs;
 
                         const f32 = (from === rate) ? ch.slice(0) : this.resample(ch, from, rate);
-                        this._prePush(f32);
+                        this._prePush(f32); // pre-roll always updated
 
                         if (this.vad.state === 'silence') {
                             if (ema >= onTh) {
+                                // ENTER VOICE
                                 this.vad.state = 'voice';
                                 this.vad.lastVoice = now;
                                 this._sawSpeech = true;
                                 this._lastSpeechAt = now;
+                                // open uplink: send pre-roll + this block
                                 this._openUplink(now, tailMs, f32);
                             } else if (this._uplinkOn) {
+                                // We're silent while uplink is open (tail waiting).
+                                // DO NOT push any audio during silence (cut to silence).
                                 if (now > this._tailDeadline) {
                                     const postQuiet = (now - this._lastPostAt) >= this._lingerMs;
                                     const partialQuiet = (!this._sawPartialForUplink) || ((now - this._lastPartialAt) >= this._lingerMs);
                                     const hardQuiet = (now - Math.max(this._lastPostAt, this._lastPartialAt || 0)) >= this._forceQuietMaxMs;
                                     if ((postQuiet && partialQuiet) || hardQuiet) this._closeUplinkAndMaybeFinalize();
-                                    else this.pushF32(f32);
-                                } else {
-                                    this.pushF32(f32);
                                 }
                             }
                         } else {
+                            // state === 'voice'
                             if (ema >= offTh) {
+                                // still voice
                                 this.vad.lastVoice = now;
                                 this._lastSpeechAt = now;
                                 if (this._uplinkOn) { this._extendTail(now, tailMs); this.pushF32(f32); }
                             } else {
+                                // below off threshold → hangover
                                 const sinceVoice = now - (this.vad.lastVoice || now);
                                 if (sinceVoice >= holdMs) {
+                                    // EXIT VOICE → SILENCE
                                     this.vad.state = 'silence';
                                     this.vad.lastSilence = now;
                                     if (this.aggr.pend) { this.addPhrase(this.aggr.pend.trim()); this.aggr.pend = ''; }
+                                    // IMPORTANT: do NOT push audio here; silence begins now
                                 } else {
+                                    // brief dip; still voice, but don't refresh lastVoice
                                     if (this._uplinkOn) this.pushF32(f32);
                                 }
                             }
                         }
 
-                        if (this.vad.state === 'silence' && this._uplinkOn) {
-                            if (now <= this._tailDeadline) this.pushF32(f32);
-                            else {
-                                const postQuiet = (now - this._lastPostAt) >= this._lingerMs;
-                                const partialQuiet = (!this._sawPartialForUplink) || ((now - this._lastPartialAt) >= this._lingerMs);
-                                const hardQuiet = (now - Math.max(this._lastPostAt, this._lastPartialAt || 0)) >= this._forceQuietMaxMs;
-                                if ((postQuiet && partialQuiet) || hardQuiet) this._closeUplinkAndMaybeFinalize();
-                                else this.pushF32(f32);
-                            }
-                        }
-
+                        // UI meters
                         this.vu(ema);
                         const v = qs('#asrVad'); if (v) v.textContent = this.vad.state;
                         const rv = qs('#asrRmsVal'); if (rv) rv.textContent = ema.toFixed(3);
 
+                        // BATCH: auto finalize on long silence
                         if (!live) {
                             if (ema < offTh) {
                                 batchQuietSince = batchQuietSince ?? now;
@@ -1075,6 +1115,7 @@
 
                     clearInterval(this._vadWatch);
                     if (live) {
+                        // watchdog: if silent tail has elapsed & no uploads/partials recently → finalize
                         this._vadWatch = setInterval(() => {
                             if (!this.sid || this.finalizing || !this._uplinkOn) return;
                             const now = performance.now();
@@ -1251,7 +1292,8 @@
                 const need = () => Math.round(rate * (chunk / 1000));
                 while (this.running && this.sid) {
                     if (this.bufF32.length >= need() && this.out < 4) {
-                        const f32 = this.drainF32(need()); const bytes = this.i16(f32);
+                        const f32 = this.drainF32(need());
+                        const bytes = this.i16(f32);
                         const url = base.replace(/\/+$/, '') + `/recognize/stream/${encodeURIComponent(this.sid)}/audio?format=pcm16&sr=${rate}`;
                         this.out++; const ao = qs('#asrOut'); if (ao) ao.textContent = String(this.out);
                         try {
@@ -1284,6 +1326,7 @@
                 return shortGeneric && (weSawNoSpeech || inSilenceNow || lowConf);
             }
         };
+
 
 
 
@@ -1491,6 +1534,137 @@
 
 
         const LLM = {
+            // ---- conversation state ----
+            _memLoaded: false,
+            _history: [],            // [{role:'user'|'assistant'|'system', content:string}, ...]
+            _lastUserText: '',       // captured per-turn so we can save to memory after streaming
+
+            // Pull toggles from DOM or CFG with sane fallbacks
+            _useSystem() { return (qs('#llmUseSystem')?.value === 'true') || !!CFG.llm?.useSystem; },
+            _systemText() { return (qs('#llmSystem')?.value || CFG.llm?.system || '').trim(); },
+            _memoryOn() { return (qs('#llmMemory')?.value === 'true') || !!CFG.llm?.memoryOn; },
+            _persistOn() { return (qs('#llmPersistMemory')?.value === 'true') || !!CFG.llm?.persistMemory; },
+            _maxTurns() {
+                // number of user/assistant pairs to keep (not counting system)
+                const n = parseInt(qs('#llmMaxTurns')?.value || (CFG.llm?.maxTurns ?? 16), 10);
+                return Number.isFinite(n) && n > 0 ? n : 16;
+            },
+
+            _ensureMemoryLoaded() {
+                if (this._memLoaded) return;
+                // load any persisted memory
+                if (CFG.llm && Array.isArray(CFG.llm.memory)) {
+                    // make a shallow copy to avoid accidental shared mutation
+                    this._history = CFG.llm.memory.slice();
+                } else {
+                    this._history = [];
+                }
+                this._memLoaded = true;
+            },
+
+            clearMemory() {
+                this._history = [];
+                if (CFG.llm) { CFG.llm.memory = []; saveCFG(); }
+                Router.send('llm:memory', { type: 'cleared' });
+            },
+
+            _trimHistoryInPlace() {
+                // Keep only last N user/assistant turns (plus leading system if present)
+                const maxPairs = this._maxTurns();
+
+                // Identify an initial system message (only first is kept)
+                let sys = null;
+                const rest = [];
+                for (const m of this._history) {
+                    if (!sys && m.role === 'system') { sys = m; continue; }
+                    rest.push(m);
+                }
+
+                // Walk from end and keep last maxPairs pairs (user+assistant). If odd count, keep the last message anyway.
+                const pruned = [];
+                let pairs = 0;
+                for (let i = rest.length - 1; i >= 0; i--) {
+                    pruned.push(rest[i]);
+                    if (rest[i].role === 'user') {
+                        // Count a pair when we see a user message, assuming assistant follows it earlier in the array
+                        pairs++;
+                        if (pairs >= maxPairs) { break; }
+                    }
+                }
+                pruned.reverse();
+                this._history = (sys ? [sys] : []).concat(pruned);
+            },
+
+            _rememberTurn(userText, assistantText) {
+                if (!this._memoryOn()) return; // memory off → do not store
+                this._ensureMemoryLoaded();
+
+                // If a system message is configured AND memory has no system yet, pin it at the front (once).
+                if (this._useSystem()) {
+                    const sysText = this._systemText();
+                    if (sysText && !this._history.some(m => m.role === 'system')) {
+                        this._history.unshift({ role: 'system', content: sysText });
+                    }
+                }
+
+                // Append the turn
+                if (userText?.trim()) this._history.push({ role: 'user', content: userText.trim() });
+                if (assistantText?.trim()) this._history.push({ role: 'assistant', content: assistantText.trim() });
+
+                // Trim & optionally persist
+                this._trimHistoryInPlace();
+                if (this._persistOn()) {
+                    if (!CFG.llm) CFG.llm = {};
+                    CFG.llm.memory = this._history.slice();
+                    saveCFG();
+                }
+
+                Router.send('llm:memory', { type: 'updated', size: this._history.length });
+            },
+
+            _buildMessages(latestUserText) {
+                const msgs = [];
+                const useSys = this._useSystem();
+                const memOn = this._memoryOn();
+                this._ensureMemoryLoaded();
+
+                // System message (explicit UI or CFG)
+                const sysText = this._systemText();
+                if (useSys && sysText) {
+                    // If history already contains a system (persisted), ensure the first message is that one,
+                    // and update its content if it differs (so the toggle updates future calls).
+                    const hasSysIdx = this._history.findIndex(m => m.role === 'system');
+                    if (hasSysIdx >= 0) {
+                        if (this._history[hasSysIdx].content !== sysText) {
+                            this._history[hasSysIdx] = { role: 'system', content: sysText };
+                            if (this._persistOn()) { CFG.llm.memory = this._history.slice(); saveCFG(); }
+                        }
+                    } else {
+                        // don't modify stored history at build time; only send system transiently unless we later save
+                        msgs.push({ role: 'system', content: sysText });
+                    }
+                }
+
+                // History (if enabled)
+                if (memOn) {
+                    // If history contains a system and we didn't add one above transiently,
+                    // include from stored history.
+                    let i = 0;
+                    if (this._history.length && this._history[0].role === 'system') {
+                        if (!msgs.length) msgs.push(this._history[0]);
+                        i = 1;
+                    }
+                    for (; i < this._history.length; i++) msgs.push(this._history[i]);
+                }
+
+                // Finally add the new user message
+                if (latestUserText?.trim()) {
+                    msgs.push({ role: 'user', content: latestUserText.trim() });
+                }
+
+                return msgs;
+            },
+
             async refreshModels() {
                 try {
                     const data = await Net.getJSON(CFG.llm.base, '/api/tags', CFG.llm.api, CFG.transport === 'nkn', CFG.llm.relay);
@@ -1499,6 +1673,7 @@
                     if (arr.length) { CFG.llm.model = (CFG.llm.model && arr.includes(CFG.llm.model)) ? CFG.llm.model : arr[0]; sel.value = CFG.llm.model; saveCFG(); log('[llm] models ok') }
                 } catch (e) { log('[llm] tags ' + e.message) }
             },
+
             setState(txt, cls = 'ok') { const s = qs('#llmState'); const d = qs('#llmDot'); if (s) s.textContent = txt; if (d) d.className = 'dot ' + (cls === 'ok' ? 'ok' : cls === 'err' ? 'err' : 'warn') },
 
             async onPrompt(payload) {
@@ -1507,15 +1682,18 @@
                 if (!model) { this.setState('no model', 'err'); return }
                 const stream = (qs('#llmStream')?.value) === 'true';
                 const viaNkn = CFG.transport === 'nkn', base = CFG.llm.base, api = CFG.llm.api, relay = CFG.llm.relay;
-                const out = qs('#llmTokens'); if (out) out.textContent = ''; let full = ''; let tok = 0; let bytes = 0; const t0 = performance.now();
+
+                // Build message list with system + history + latest user
+                const messages = this._buildMessages(text);
+                this._lastUserText = text; // remember for saving after we get assistant final
+
+                const out = qs('#llmTokens'); if (out) out.textContent = '';
+                let full = ''; let tok = 0; let bytes = 0; const t0 = performance.now();
                 const upd = () => { const t = qs('#llmTok'); if (t) t.textContent = String(tok); const b = qs('#llmBytes'); if (b) b.textContent = String(bytes); const m = qs('#llmMs'); if (m) m.textContent = String(Math.round(performance.now() - t0)) + 'ms' };
 
                 const emitSentence = (s) => { Router.send('tts:text', { text: s, eos: true }); };
 
-                const EOT_TOKENS = ["<|eot_id|>", "</s>"];
-                function stripEOT(s) { let out = s || ''; for (const t of EOT_TOKENS) out = out.split(t).join(''); return out; }
-
-                function handleLine(ln) {
+                const handleLine = (ln) => {
                     try {
                         const obj = JSON.parse(ln);
 
@@ -1525,7 +1703,7 @@
                             (typeof obj.response === 'string' && obj.response) ||
                             (typeof obj.delta === 'string' && obj.delta) || '';
 
-                        // some backends send full text only in the terminal object
+                        // terminal-only content fallbacks
                         if (!delta && (obj.done || obj.complete) && obj.final && typeof obj.final === 'string') {
                             delta = obj.final;
                         }
@@ -1537,50 +1715,48 @@
                             const clean = stripEOT(delta);
                             full += clean;
                             if (out) { out.textContent += clean; out.scrollTop = out.scrollHeight; }
-                            tok += (clean.match(/\S+/g) || []).length; upd();
+                            tok += (clean.match(/\S+/g) || []).length; bytes += clean.length; upd();
                             SentenceMux.pushDelta(clean, emitSentence);
                             Router.send('llm:delta', { type: 'text', text: clean });
                         }
                     } catch {
-                        // Do NOT treat partial JSON as text. Just ignore here; the JSON-aware pump
-                        // will deliver a full object via flush() once complete (or nothing if truly partial).
+                        // ignore mid-JSON fragments — the NDJSON pump will deliver complete objects
                     }
                 };
+
                 try {
                     if (stream) {
                         this.setState('streaming', 'warn'); upd();
                         const pump = makeNdjsonPump(handleLine);
-                        const body = { model, messages: [{ role: 'user', content: text }], stream: true };
 
                         if (viaNkn) {
-                            this.setState('streaming', 'warn'); upd();
-                            const pump = makeNdjsonPump(handleLine);
-
-                            // NEW: reorder NKN 'lines' by seq before feeding pump
                             const order = makeSeqAligner(line => pump.push(line + '\n'));
-
                             await Net.nknStream({
                                 url: base.replace(/\/+$/, '') + '/api/chat',
                                 method: 'POST',
                                 headers: Net.auth({ 'X-Relay-Stream': 'chunks', 'Accept': 'application/x-ndjson' }, api),
-                                json: { model, messages: [{ role: 'user', content: text }], stream: true },
+                                json: { model, messages, stream: true },
                                 timeout_ms: 180000
                             }, relay, {
                                 onBegin: () => { this.setState('stream open', 'warn') },
-                                onLine: (line, seq) => { order.push(line, seq) },    // <-- ordered now
-                                onChunk: (u8) => pump.push(u8),                      // (rare, keep as fallback)
+                                onLine: (line, seq) => { order.push(line, seq) },
+                                onChunk: (u8) => pump.push(u8),
                                 onEnd: (m) => {
                                     order.end(m && (m.last_seq | 0));
                                     pump.flush();
                                     SentenceMux.flush(emitSentence);
                                     this.setState('done', 'ok');
+
+                                    // Save the completed turn if memory is on
+                                    const finalText = stripEOT(full || '');
+                                    this._rememberTurn(this._lastUserText, finalText);
                                 }
                             }, 180000);
                         } else {
                             const r = await fetch(base.replace(/\/+$/, '') + '/api/chat', {
                                 method: 'POST',
                                 headers: Net.auth({ 'Accept': 'application/x-ndjson', 'Content-Type': 'application/json' }, api),
-                                body: JSON.stringify(body)
+                                body: JSON.stringify({ model, messages, stream: true })
                             });
                             if (!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
                             const reader = r.body.getReader();
@@ -1588,18 +1764,30 @@
                             pump.flush();
                             SentenceMux.flush(emitSentence);
                             this.setState('done', 'ok');
+
+                            const finalText = stripEOT(full || '');
+                            this._rememberTurn(this._lastUserText, finalText);
                         }
                     } else {
-                        const data = await Net.postJSON(base, '/api/chat', { model, messages: [{ role: 'user', content: text }], stream: false }, api, viaNkn, relay, 120000);
-                        full = (data?.message?.content) || (data?.response) || '';
-                        full = stripEOT(full);
-                        tok = (full.match(/\S+/g) || []).length; bytes = full.length; upd();
-                        if (out) out.textContent = full; this.setState('done', 'ok');
-                        SentenceMux.pushDelta(full + '\n', emitSentence);
+                        const data = await Net.postJSON(base, '/api/chat', { model, messages, stream: false }, api, viaNkn, relay, 120000);
+                        full = stripEOT((data?.message?.content) || (data?.response) || '');
+                        const finalText = full || '';
+                        tok = (finalText.match(/\S+/g) || []).length; bytes = finalText.length; upd();
+                        const outEl = qs('#llmTokens'); if (outEl) outEl.textContent = finalText;
+                        this.setState('done', 'ok');
+
+                        SentenceMux.pushDelta(finalText + '\n', emitSentence);
                         SentenceMux.flush(emitSentence);
+
+                        // Save turn if memory is on
+                        this._rememberTurn(this._lastUserText, finalText);
                     }
+
                     Router.send('llm:final', { type: 'text', text: full });
-                } catch (e) { this.setState('error', 'err'); log('[llm] ' + e.message) }
+                } catch (e) {
+                    this.setState('error', 'err');
+                    log('[llm] ' + e.message);
+                }
             }
         };
 
@@ -1964,13 +2152,57 @@
             const arf = qs('#asrRefresh'); if (arf) arf.addEventListener('click', () => ASR.refreshModels());
 
             // LLM inputs
+
+            // Ensure LLM config defaults exist
+            CFG.llm = Object.assign({
+                base: '',
+                relay: '',
+                api: '',
+                model: '',
+                stream: true,
+                useSystem: false,
+                system: '',
+                memoryOn: false,
+                persistMemory: false,
+                maxTurns: 16,
+                memory: []   // persisted history (optional)
+            }, CFG.llm || {});
+
+
             if (qs('#llmBase')) qs('#llmBase').value = CFG.llm.base; if (qs('#llmRelay')) qs('#llmRelay').value = CFG.llm.relay; if (qs('#llmApi')) qs('#llmApi').value = CFG.llm.api;
             if (qs('#llmStream')) qs('#llmStream').value = String(!!CFG.llm.stream);
-            qsa('#llmCard input, #llmCard select').forEach(el => el.addEventListener('change', () => {
-                CFG.llm.base = qs('#llmBase')?.value.trim() || CFG.llm.base; CFG.llm.relay = qs('#llmRelay')?.value.trim() || ''; CFG.llm.api = qs('#llmApi')?.value.trim() || '';
-                CFG.llm.model = qs('#llmModel')?.value || CFG.llm.model; CFG.llm.stream = (qs('#llmStream')?.value) === 'true'; saveCFG();
+            // New LLM memory/system UI defaults
+            if (qs('#llmUseSystem')) qs('#llmUseSystem').value = String(!!CFG.llm.useSystem);
+            if (qs('#llmSystem')) qs('#llmSystem').value = CFG.llm.system || '';
+            if (qs('#llmMemory')) qs('#llmMemory').value = String(!!CFG.llm.memoryOn);
+            if (qs('#llmPersistMemory')) qs('#llmPersistMemory').value = String(!!CFG.llm.persistMemory);
+            if (qs('#llmMaxTurns')) qs('#llmMaxTurns').value = (CFG.llm.maxTurns ?? 16);
+            if (qs('#llmMemSize')) qs('#llmMemSize').textContent = String((CFG.llm.memory && CFG.llm.memory.length) || 0);
+
+            qsa('#llmCard input, #llmCard select, #llmCard textarea').forEach(el => el.addEventListener('change', () => {
+                CFG.llm.base = qs('#llmBase')?.value.trim() || CFG.llm.base;
+                CFG.llm.relay = qs('#llmRelay')?.value.trim() || '';
+                CFG.llm.api = qs('#llmApi')?.value.trim() || '';
+                CFG.llm.model = qs('#llmModel')?.value || CFG.llm.model;
+                CFG.llm.stream = (qs('#llmStream')?.value) === 'true';
+
+                // new fields
+                CFG.llm.useSystem = (qs('#llmUseSystem')?.value) === 'true';
+                CFG.llm.system = (qs('#llmSystem')?.value || '').trim();
+                CFG.llm.memoryOn = (qs('#llmMemory')?.value) === 'true';
+                CFG.llm.persistMemory = (qs('#llmPersistMemory')?.value) === 'true';
+                CFG.llm.maxTurns = parseInt(qs('#llmMaxTurns')?.value || '16', 10) || 16;
+
+                saveCFG(); setBadge('Saved');
             }));
+
             const lr = qs('#llmRefresh'); if (lr) lr.addEventListener('click', () => LLM.refreshModels());
+            const lcm = qs('#llmClearMemory');
+            if (lcm) lcm.addEventListener('click', () => {
+                LLM.clearMemory();
+                const ms = qs('#llmMemSize'); if (ms) ms.textContent = '0';
+                setBadge('Memory cleared');
+            });
 
             // TTS inputs
             if (qs('#ttsBase')) qs('#ttsBase').value = CFG.tts.base; if (qs('#ttsRelay')) qs('#ttsRelay').value = CFG.tts.relay; if (qs('#ttsApi')) qs('#ttsApi').value = CFG.tts.api;
