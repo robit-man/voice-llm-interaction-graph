@@ -669,8 +669,18 @@
                     this._sawSpeech = false;
 
                     const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
-                    const body = prompt ? { prompt } : {};
-
+                    const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
+                    const body = Object.assign(
+                        {},
+                        prompt ? { prompt } : {},
+                        model ? { model } : {},
+                        {
+                            temperature: 0.0,
+                            condition_on_previous_text: false,
+                            no_speech_threshold: 0.6,
+                            logprob_threshold: -1.0
+                        }
+                    );
                     const data = await Net.postJSON(base, '/recognize/stream/start', body, api, viaNkn, relay, 20000);
                     this.sid = data && (data.id || data.sid || data.session);
 
@@ -824,7 +834,18 @@
 
                 try {
                     const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
-                    const body = Object.assign({}, prompt ? { prompt } : {});
+                    const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
+                    const body = Object.assign(
+                        {},
+                        prompt ? { prompt } : {},
+                        model ? { model } : {},
+                        {
+                            temperature: 0.0,
+                            condition_on_previous_text: false,
+                            no_speech_threshold: 0.6,
+                            logprob_threshold: -1.0
+                        }
+                    );
                     const data = await Net.postJSON(base, '/recognize/stream/start', body, api, viaNkn, relay, 20000);
                     this.sid = data && (data.sid || data.id || data.session);
                     if (this.sid) this.openEvents(this.sid, viaNkn, base, relay, api).catch(() => { });
@@ -857,6 +878,7 @@
 
                 // real-time state flags
                 this._sawSpeech = false;
+                this._lastSpeechAt = 0;
                 this.finalizing = false;
 
                 // ── audio + VAD wire-up
@@ -899,6 +921,7 @@
                                 this.vad.state = 'voice';
                                 this.vad.lastVoice = now;
                                 this._sawSpeech = true;
+                                this._lastSpeechAt = now;
                             }
                         } else {
                             if (ema < offTh) {
@@ -911,6 +934,7 @@
                                 }
                             } else {
                                 this.vad.lastVoice = now;
+                                this._lastSpeechAt = now;
                             }
                         }
 
@@ -939,7 +963,7 @@
                         // live: REAL final trigger — call /end (no fake finals)
                         if (
                             live && this.sid && !this.finalizing &&
-                            this._sawSpeech && this.vad.state === 'silence' &&
+                            this._sawSpeech && recentSpeech && this.vad.state === 'silence' &&
                             (now - (this.vad.lastSilence || now)) >= silence
                         ) {
                             this.finalizing = true;
@@ -994,7 +1018,18 @@
                     try {
                         const prompt = (qs('#asrPrompt')?.value || CFG.asr.prompt || '').trim();
                         const model = (qs('#asrModel')?.value || CFG.asr.model || '').trim();
-                        const body = Object.assign({}, prompt ? { prompt } : {}, model ? { model } : {});
+                        const body = Object.assign(
+                            {},
+                            prompt ? { prompt } : {},
+                            model ? { model } : {},
+                            {
+                                temperature: 0.0,
+                                condition_on_previous_text: false,
+                                no_speech_threshold: 0.6,
+                                logprob_threshold: -1.0
+                                // suppress_tokens: [ /* backend-specific IDs if supported */ ]
+                            }
+                        );
                         const data = await Net.postJSON(base, '/recognize/stream/start', body, api, viaNkn, relay, 45000);
                         this.sid = (data && (data.sid || data.id || data.session)) || null;
                         if (!this.sid) throw new Error('no sid');
@@ -1067,15 +1102,34 @@
                             const text = obj.text || (obj.result && obj.result.text) || '';
                             this.printPartial(text);
                             this.handlePartialForPhrases(text);
-                            if (text) this._sawSpeech = true;   // NEW
+                            if (text) {
+                                this._sawSpeech = true;
+                                this._lastSpeechAt = performance.now();
+                            }
                         } else if (t === 'asr.detected' || t === 'detected') {
                             const s = obj.text || (obj.result && obj.result.text) || '';
-                            if (s) this.addPhrase(s);
+                            if (s) {
+                                const meta = (obj.result && obj.result) || obj;
+                                if (!ASR.shouldDropAsHallucination(s, meta)) {
+                                    this.addPhrase(s);
+                                } else {
+                                    log('[asr] suppressed hallucinated sign-off (detected): "' + s + '"');
+                                }
+                            }
                         } else if (t === 'asr.final' || t === 'final') {
                             const s = (obj.result && obj.result.text) || obj.text || '';
-                            if (s) { this.handleFinalFlush(s); this.appendFinal(s); }
+                            if (s) {
+                                const meta = (obj.result && obj.result) || obj; // use whatever fields we have
+                                if (ASR.shouldDropAsHallucination(s, meta)) {
+                                    log('[asr] dropped probable hallucinated sign-off: "' + s + '"');
+                                } else {
+                                    this.handleFinalFlush(s);
+                                    this.appendFinal(s);
+                                }
+                            }
                             this.printPartial('');
-                        } else if (t === 'error') {
+                        }
+                        else if (t === 'error') {
                             log('[asr] ' + (obj.message || obj.error || 'error'));
                         }
                         const e = qs('#asrEvt'); if (e) e.textContent = t;
@@ -1113,6 +1167,24 @@
                     await new Promise(r => setTimeout(r, Math.max(10, chunk / 2)));
                 }
             }
+        };
+        // Decide whether a final looks like a sign-off hallucination
+        ASR.shouldDropAsHallucination = function (text, meta) {
+            if (!SIGNOFF_RE.test(text)) return false;
+
+            // Signals we often see with this failure mode:
+            const words = (text.match(/\S+/g) || []).length;
+            const shortGeneric = words <= 7;
+            const weSawNoSpeech = !this._sawSpeech;
+            const inSilenceNow = this.vad?.state === 'silence';
+
+            // Optional meta from backend (use if present)
+            const noSpeechProb = (meta && typeof meta.no_speech_prob === 'number') ? meta.no_speech_prob : null;
+            const lowConf = (noSpeechProb !== null && noSpeechProb > 0.6) ||
+                (meta && typeof meta.avg_logprob === 'number' && meta.avg_logprob < -1.0) ||
+                (meta && typeof meta.compression_ratio === 'number' && meta.compression_ratio > 2.4);
+
+            return shortGeneric && (weSawNoSpeech || inSilenceNow || lowConf);
         };
 
         /* ======== LLM ======== */
