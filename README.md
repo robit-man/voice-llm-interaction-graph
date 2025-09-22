@@ -12,7 +12,7 @@
   </a>
 </p>
 
-<img width="1754" height="1267" alt="image" src="https://github.com/user-attachments/assets/321f08fc-5fe9-4f26-9a62-cf3fb3e4ea77" />
+<img width="1748" height="1261" alt="image" src="https://github.com/user-attachments/assets/88c23936-ac06-4a85-be40-094a0e2af4cb" />
 
 A lightweight, browser-first visual editor for wiring realtime speech + language + speech pipelines. Drag nodes, connect ports with SVG splines, stream delta tokens sentence-by-sentence to TTS, and persist your graph to LocalStorage. Works with direct HTTP backends or NKN relays.
 
