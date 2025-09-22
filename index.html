@@ -53,7 +53,7 @@
     #workspace{position:absolute;inset:0}
     #linksSvg{position:absolute;inset:0;pointer-events:none}
     /* Node */
-    .node{position:absolute;min-width:230px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:14px;box-shadow:var(--shadow);user-select:none}
+    .node{position:absolute;min-width:230px;max-width:512px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:14px;box-shadow:var(--shadow);user-select:none}
     .node .head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;cursor:grab;background:rgba(0,0,0,.15);border-bottom:1px solid rgba(255,255,255,.12);border-top-left-radius:14px;border-top-right-radius:14px}
     .node .head:active{cursor:grabbing}
     .node .title{font-weight:700;font-size:13px}
@@ -536,16 +536,13 @@ const LLM = {
         for(let i=iStart;i<memory.length;i++) msgs.push(memory[i]);
       }
       if(latest?.trim()) msgs.push({role:'user', content:latest.trim()});
-      // trim to last N user turns
       if(memOn){
         let userCount=msgs.filter(m=>m.role==='user').length;
         while(userCount>maxTurns){
-          // remove earliest user + its following assistant if any (but not system)
           const si = (msgs[0]?.role==='system')?1:0;
           const uIdx = msgs.findIndex((m,i)=>i>=si && m.role==='user');
           if(uIdx<0) break;
           msgs.splice(uIdx, 1);
-          // remove assistant immediately after if any
           if(msgs[uIdx]?.role==='assistant') msgs.splice(uIdx,1);
           userCount--;
         }
@@ -557,13 +554,11 @@ const LLM = {
     const mux = createSentenceMux(250);
     let full='';
 
-    // helper emitters
-    const emitDelta = (txt)=>{
-      Router.sendFrom(nodeId,'delta',{nodeId,type:'text',text:txt});
-    };
-    const emitSentence = (s)=>{
-      Router.sendFrom(nodeId,'final',{nodeId,text:s,eos:true});
-    };
+    // emitters
+    const emitSentenceFinal = (s)=>{ Router.sendFrom(nodeId,'final',{nodeId,text:s,eos:true}); };
+    const emitSentenceDelta = (s)=>{ Router.sendFrom(nodeId,'delta',{nodeId,type:'text',text:s,eos:true}); };
+    // one callback for mux that preserves existing 'final' behavior AND adds sentence-sized 'delta'
+    const emitBoth = (s)=>{ emitSentenceDelta(s); emitSentenceFinal(s); };
 
     try{
       if(stream){
@@ -579,15 +574,15 @@ const LLM = {
             if(delta){
               const clean=stripEOT(delta);
               full+=clean;
-              emitDelta(clean);
-              mux.push(clean, emitSentence);
+              // CHANGED: no more word/token deltas here
+              mux.push(clean, emitBoth); // sentences only
             }
           }catch{}
         });
 
         if(viaNkn){
           let expected=null; const stash=new Map(); const seen=new Set();
-          const flush=()=>{ while(expected!=null && stash.has(expected)){ pump.push(stash.get(expected)+'\n'); stash.delete(expected); expected++ } };
+          const flushReorder=()=>{ while(expected!=null && stash.has(expected)){ pump.push(stash.get(expected)+'\n'); stash.delete(expected); expected++ } };
           await Net.nknStream({
             url:base.replace(/\/+$/,'')+'/api/chat', method:'POST',
             headers:Net.auth({'X-Relay-Stream':'chunks','Accept':'application/x-ndjson'}, api),
@@ -595,9 +590,9 @@ const LLM = {
           }, relay, {
             onBegin:()=>{},
             onLine:(line, seqRaw)=>{ const seq=(seqRaw|0); if(seen.has(seq))return; seen.add(seq); if(expected==null) expected=seq;
-              if(seq===expected){ pump.push(line+'\n'); expected++; flush(); } else if(seq>expected){ stash.set(seq,line) } },
+              if(seq===expected){ pump.push(line+'\n'); expected++; flushReorder(); } else if(seq>expected){ stash.set(seq,line) } },
             onChunk:(u8)=>pump.push(u8),
-            onEnd:()=>{ flush(); pump.flush(); mux.flush(emitSentence); }
+            onEnd:()=>{ flushReorder(); pump.flush(); mux.flush(emitBoth); }
           }, 180000);
         }else{
           const r = await fetch(base.replace(/\/+$/,'')+'/api/chat', {
@@ -608,15 +603,15 @@ const LLM = {
           if(!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
           const rd=r.body.getReader();
           while(true){ const {value,done}=await rd.read(); if(done) break; if(value && value.byteLength) pump.push(value) }
-          pump.flush(); mux.flush(emitSentence);
+          pump.flush(); mux.flush(emitBoth);
         }
       }else{
         const data = await Net.postJSON(base,'/api/chat',{model,messages,stream:false}, api, viaNkn, relay, 120000);
         full = stripEOT((data?.message?.content)||(data?.response)||'') || '';
-        if(full){ mux.push(full+'\n', emitSentence); mux.flush(emitSentence) }
+        if(full){ mux.push(full+'\n', emitBoth); mux.flush(emitBoth); }
       }
 
-      // persist memory per node
+      // persist memory per node (unchanged)
       if(cfg.memoryOn){
         const newMem = (memory || []).slice();
         if(sysUse && sysTxt && !(newMem.length && newMem[0].role==='system')){
@@ -625,7 +620,6 @@ const LLM = {
         if(text?.trim()) newMem.push({role:'user', content:text.trim()});
         const finalText = full.trim();
         if(finalText) newMem.push({role:'assistant', content:finalText});
-        // trim pairs
         let pairs=0; const pruned=[];
         let i = (newMem.length && newMem[0].role==='system')?1:0;
         for(let k=newMem.length-1;k>=i;k--){
@@ -648,17 +642,18 @@ const LLM = {
   }
 };
 
+
 /* ============================================================
-   TTS (node‑scoped)
+   TTS (node-scoped)
    ============================================================ */
 const TTS = {
-  _state:new Map(), // nodeId -> { ac, node, q:[], queued:0, sr, underruns, audioEl? }
+  _state:new Map(), // nodeId -> { ac, node, q:[], queued:0, sr, underruns, audioEl?, chain }
   ensure(nodeId){
     let s=this._state.get(nodeId);
     if(s) return s;
     const ac = new (window.AudioContext||window.webkitAudioContext)({ sampleRate:22050 });
     const node = ac.createScriptProcessor(4096,1,1);
-    const st = { ac, node, q:[], queued:0, sr:ac.sampleRate||22050, underruns:0 };
+    const st = { ac, node, q:[], queued:0, sr:ac.sampleRate||22050, underruns:0, chain:Promise.resolve() }; // NEW: chain
     node.onaudioprocess=(e)=>{
       const out=e.outputBuffer.getChannelData(0);
       if(!st.q.length){ out.fill(0); st.underruns++; return }
@@ -672,7 +667,6 @@ const TTS = {
       }
     };
     node.connect(ac.destination);
-    // attach (hidden) audio tag for file mode into node box
     const box = Graph.getNode(nodeId)?.el?.querySelector('.body');
     if(box && !box.querySelector('audio')){
       const au=document.createElement('audio'); au.controls=true; au.style.marginTop='6px'; box.appendChild(au); st.audioEl=au;
@@ -706,62 +700,83 @@ const TTS = {
     const st=this.ensure(nodeId);
     const clean=this._sanitize(String(raw)); if(!clean) return;
 
-    if(mode==='stream'){
-      await st.ac.resume();
-      // short preroll
-      this.enqueue(st, new Float32Array(Math.round((st.sr||22050)*0.04)));
+    const speakOnce = async ()=>{
+      if(mode==='stream'){
+        await st.ac.resume();
+        // short preroll
+        this.enqueue(st, new Float32Array(Math.round((st.sr||22050)*0.04)));
 
-      const req = { text: clean, mode:'stream', format:'raw', ...(model?{model,voice:model}:{}) };
-      const handleBytes=(u8)=>{
-        if(!u8 || !u8.length) return;
-        const even=(u8.length>>1)<<1; if(!even) return;
-        const body=u8.subarray(0,even);
-        const frames=body.length>>1; const dv=new DataView(body.buffer, body.byteOffset, body.length);
-        const i16=new Int16Array(frames); for(let i=0;i<frames;i++) i16[i]=dv.getInt16(i*2,true);
-        let f32=this.f32FromI16(i16); if(st.sr!==22050) f32=this.resampleLinear(f32, 22050, st.sr);
-        this.enqueue(st, f32);
-      };
+        const req = { text: clean, mode:'stream', format:'raw', ...(model?{model,voice:model}:{}) };
+        const handleBytes=(u8)=>{
+          if(!u8 || !u8.length) return;
+          const even=(u8.length>>1)<<1; if(!even) return;
+          const body=u8.subarray(0,even);
+          const frames=body.length>>1; const dv=new DataView(body.buffer, body.byteOffset, body.length);
+          const i16=new Int16Array(frames); for(let i=0;i<frames;i++) i16[i]=dv.getInt16(i*2,true);
+          let f32=this.f32FromI16(i16); if(st.sr!==22050) f32=this.resampleLinear(f32, 22050, st.sr);
+          this.enqueue(st, f32);
+        };
 
-      try{
-        if(viaNkn){
-          let expected=null; const stash=new Map(); const seen=new Set(); const flush=()=>{ while(expected!=null && stash.has(expected)){ handleBytes(stash.get(expected)); stash.delete(expected); expected++ } };
-          await Net.nknStream(
-            { url:base.replace(/\/+$/,'')+'/speak', method:'POST', headers:Net.auth({'X-Relay-Stream':'chunks'}, api), json:req, timeout_ms:120000 },
-            relay,
-            {
-              onBegin:()=>{},
-              onChunk:(u8, seqRaw)=>{ const seq=(seqRaw|0); if(seen.has(seq))return; seen.add(seq); if(expected==null) expected=seq; if(seq===expected){ handleBytes(u8); expected++; flush() } else if(seq>expected){ stash.set(seq,u8) } },
-              onEnd:()=>{}
-            },
-            120000
-          );
-        }else{
-          const r=await fetch(base.replace(/\/+$/,'')+'/speak',{method:'POST',headers:Net.auth({},api),body:JSON.stringify(req)});
-          if(!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
-          const rd=r.body.getReader(); let leftover=new Uint8Array(0);
-          while(true){
-            const {value,done}=await rd.read(); if(done) break; if(!value || !value.byteLength) continue;
-            const merged=new Uint8Array(leftover.length+value.length); merged.set(leftover,0); merged.set(value,leftover.length);
-            const even=(merged.length>>1)<<1; if(even){ handleBytes(merged.subarray(0,even)); leftover=merged.subarray(even) } else leftover=merged;
+        try{
+          if(viaNkn){
+            let expected=null; const stash=new Map(); const seen=new Set();
+            const flush=()=>{ while(expected!=null && stash.has(expected)){ handleBytes(stash.get(expected)); stash.delete(expected); expected++ } };
+            await Net.nknStream(
+              { url:base.replace(/\/+$/,'')+'/speak', method:'POST', headers:Net.auth({'X-Relay-Stream':'chunks'}, api), json:req, timeout_ms:120000 },
+              relay,
+              {
+                onBegin:()=>{},
+                onChunk:(u8, seqRaw)=>{
+                  const seq=(seqRaw|0); if(seen.has(seq)) return; seen.add(seq);
+                  if(expected==null) expected=seq;
+                  if(seq===expected){ handleBytes(u8); expected++; flush() }
+                  else if(seq>expected){ stash.set(seq,u8) }
+                },
+                onEnd:()=>{ flush(); } // FIX: ensure any held frames are emitted in order
+              },
+              120000
+            );
+          }else{
+            const r=await fetch(base.replace(/\/+$/,'')+'/speak',{method:'POST',headers:Net.auth({},api),body:JSON.stringify(req)});
+            if(!r.ok || !r.body) throw new Error(`${r.status} ${r.statusText}`);
+            const rd=r.body.getReader(); let leftover=new Uint8Array(0);
+            while(true){
+              const {value,done}=await rd.read(); if(done) break; if(!value || !value.byteLength) continue;
+              const merged=new Uint8Array(leftover.length+value.length); merged.set(leftover,0); merged.set(value,leftover.length);
+              const even=(merged.length>>1)<<1; if(even){ handleBytes(merged.subarray(0,even)); leftover=merged.subarray(even) } else leftover=merged;
+            }
+            // no special flush needed here; odd tail is <1 sample and discarded
           }
-        }
-      }catch(e){ log(`[tts ${nodeId}] ${e.message}`) }
-      // small inter‑sentence spacer
-      this.enqueue(st, new Float32Array(Math.round((st.sr||22050)*0.03)));
-    }else{
-      // file(ogg) path
-      try{
-        const data = await Net.postJSON(base, '/speak', { text:clean, mode:'file', format:'ogg', ...(model?{model,voice:model}:{}) }, api, viaNkn, relay, 10*60*1000);
-        let blob=null, mime='audio/ogg';
-        if(data?.files?.[0]?.url){ const fileUrl=base.replace(/\/+$/,'')+data.files[0].url; blob=await Net.fetchBlob(fileUrl, viaNkn, relay, api); mime=blob.type||mime }
-        else if(data?.audio_b64){ const u8=b64ToBytes(data.audio_b64); blob=new Blob([u8],{type:mime}) }
-        else throw new Error('no audio');
-        const url=URL.createObjectURL(blob);
-        if(st.audioEl){ st.audioEl.src=url; st.audioEl.play().catch(()=>{}) }
-      }catch(e){ log(`[tts ${nodeId}] ${e.message}`) }
-    }
+        }catch(e){ log(`[tts ${nodeId}] ${e.message}`) }
+        // small inter-sentence spacer
+        this.enqueue(st, new Float32Array(Math.round((st.sr||22050)*0.03)));
+      }else{
+        // file(ogg) path
+        try{
+          const data = await Net.postJSON(base, '/speak', { text:clean, mode:'file', format:'ogg', ...(model?{model,voice:model}:{}) }, api, viaNkn, relay, 10*60*1000);
+          let blob=null, mime='audio/ogg';
+          if(data?.files?.[0]?.url){ const fileUrl=base.replace(/\/+$/,'')+data.files[0].url; blob=await Net.fetchBlob(fileUrl, viaNkn, relay, api); mime=blob.type||mime }
+          else if(data?.audio_b64){ const u8=b64ToBytes(data.audio_b64); blob=new Blob([u8],{type:mime}) }
+          else throw new Error('no audio');
+          const url=URL.createObjectURL(blob);
+          if(st.audioEl){
+            // wait for this one to finish before the next (serialize file mode too)
+            await new Promise(res=>{
+              const onEnd=()=>{ st.audioEl.removeEventListener('ended', onEnd); res() };
+              st.audioEl.addEventListener('ended', onEnd);
+              st.audioEl.src=url; st.audioEl.play().catch(()=>{ /* ignore */ });
+            });
+          }
+        }catch(e){ log(`[tts ${nodeId}] ${e.message}`) }
+      }
+    };
+
+    // FIX: serialize utterances per node to prevent interleaving of frames
+    st.chain = st.chain.then(speakOnce).catch(e=>log(`[tts ${nodeId}] ${e?.message||e}`));
+    return st.chain;
   }
 };
+
 
 /* ============================================================
    ASR (node‑scoped mic owner; isolated config usage)
@@ -1090,7 +1105,7 @@ const ASR = {
    Graph Editor (nodes, wires, dynamic settings)
    ============================================================ */
 const Graph = (()=>{
-  const WS={ el:null, svg:null, nodes:new Map(), wires:[], portSel:null };
+  const WS={ el:null, svg:null, nodes:new Map(), wires:[], portSel:null, drag:null }; // NEW: drag
 
   const TYPES={
     ASR:{
@@ -1198,6 +1213,36 @@ const Graph = (()=>{
       r.className='wp-port in'; r.dataset.port=p.name; r.title=`${p.name} (Alt-click to disconnect)`;
       r.innerHTML=`<span class="dot"></span><span>${p.name}</span>`;
       r.addEventListener('click',(ev)=>{ if(ev.altKey||ev.metaKey||ev.ctrlKey){ removeWiresAt(node.id,'in',p.name); return } onPortClick(node.id,'in',p.name,r) });
+
+      // NEW: drag from INPUT (newFromInput) or retarget an existing wire at this input
+      r.addEventListener('pointerdown',(ev)=>{
+        const wires=connectedWires(node.id,'in',p.name);
+        if(wires.length){
+          // Retarget wire: drag the input end ("to")
+          const w=wires[wires.length-1];
+          w.path?.setAttribute('stroke-dasharray','6 4');
+          const move=(e)=>{ const pt=clientToWorkspace(e.clientX,e.clientY); drawRetarget(w,'to',pt.x,pt.y) };
+          const up=(e)=>finishAnyDrag(e.clientX,e.clientY);
+          WS.drag={ kind:'retarget', wireId:w.id, grabSide:'to', path:w.path, pointerId:ev.pointerId, _cleanup:()=>window.removeEventListener('pointermove', move) };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up, { once:true });
+          return;
+        }
+        // Start a new temp from INPUT -> must drop on an OUTPUT
+        const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+        path.setAttribute('fill','none'); path.setAttribute('stroke','rgba(255,255,255,.6)');
+        path.setAttribute('stroke-width','2'); path.setAttribute('stroke-linecap','round');
+        path.setAttribute('opacity','0.9'); path.setAttribute('stroke-dasharray','6 4');
+        path.setAttribute('pointer-events','none');
+        WS.svg.appendChild(path);
+        const move=(e)=>{ const pt=clientToWorkspace(e.clientX,e.clientY); drawTempFromPort({nodeId:node.id,side:'in',portName:p.name}, pt.x, pt.y) };
+        const up=(e)=>finishAnyDrag(e.clientX,e.clientY);
+        WS.drag={ kind:'newFromInput', toNodeId:node.id, toPort:p.name, path, pointerId:ev.pointerId, _cleanup:()=>window.removeEventListener('pointermove', move) };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up, { once:true });
+        const pt=clientToWorkspace(ev.clientX,ev.clientY); drawTempFromPort({nodeId:node.id,side:'in',portName:p.name}, pt.x, pt.y);
+      });
+
       left.appendChild(r);
       Router.register(`${node.id}:in:${p.name}`, r, (payload)=>{
         if(node.type==='LLM'){
@@ -1208,15 +1253,46 @@ const Graph = (()=>{
         }
       });
     }
+
     for(const p of (t.outputs||[])){
       const r=document.createElement('div');
       r.className='wp-port out'; r.dataset.port=p.name; r.title=`${p.name} (Alt-click to disconnect)`;
       r.innerHTML=`<span>${p.name}</span><span class="dot"></span>`;
       r.addEventListener('click',(ev)=>{ if(ev.altKey||ev.metaKey||ev.ctrlKey){ removeWiresAt(node.id,'out',p.name); return } onPortClick(node.id,'out',p.name,r) });
+
+      // NEW: drag from OUTPUT (new) or retarget existing wire(s) at this output
+      r.addEventListener('pointerdown',(ev)=>{
+        const wires=connectedWires(node.id,'out',p.name);
+        if(wires.length){
+          // Retarget: drag the output end ("from")
+          const w=wires[wires.length-1];
+          w.path?.setAttribute('stroke-dasharray','6 4');
+          const move=(e)=>{ const pt=clientToWorkspace(e.clientX,e.clientY); drawRetarget(w,'from',pt.x,pt.y) };
+          const up=(e)=>finishAnyDrag(e.clientX,e.clientY);
+          WS.drag={ kind:'retarget', wireId:w.id, grabSide:'from', path:w.path, pointerId:ev.pointerId, _cleanup:()=>window.removeEventListener('pointermove', move) };
+          window.addEventListener('pointermove', move);
+          window.addEventListener('pointerup', up, { once:true });
+          return;
+        }
+        // Start a new temp from OUTPUT -> must drop on an INPUT
+        const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+        path.setAttribute('fill','none'); path.setAttribute('stroke','rgba(255,255,255,.6)');
+        path.setAttribute('stroke-width','2'); path.setAttribute('stroke-linecap','round');
+        path.setAttribute('opacity','0.9'); path.setAttribute('stroke-dasharray','6 4');
+        path.setAttribute('pointer-events','none');
+        WS.svg.appendChild(path);
+        const move=(e)=>{ const pt=clientToWorkspace(e.clientX,e.clientY); drawTempFromPort({nodeId:node.id,side:'out',portName:p.name}, pt.x, pt.y) };
+        const up=(e)=>finishAnyDrag(e.clientX,e.clientY);
+        WS.drag={ kind:'new', fromNodeId:node.id, fromPort:p.name, path, pointerId:ev.pointerId, _cleanup:()=>window.removeEventListener('pointermove', move) };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up, { once:true });
+        const pt=clientToWorkspace(ev.clientX,ev.clientY); drawTempFromPort({nodeId:node.id,side:'out',portName:p.name}, pt.x, pt.y);
+      });
+
       right.appendChild(r);
     }
 
-    // dragging
+    // dragging nodes
     const head=el.querySelector('.head'); let drag=null;
     head.addEventListener('pointerdown',(e)=>{ if(e.target.closest('button')) return; drag={dx:e.clientX-el.offsetLeft, dy:e.clientY-el.offsetTop}; head.setPointerCapture(e.pointerId) });
     head.addEventListener('pointermove',(e)=>{ if(!drag) return; const gx=Math.round((e.clientX-drag.dx)/14)*14; const gy=Math.round((e.clientY-drag.dy)/14)*14; el.style.left=gx+'px'; el.style.top=gy+'px'; node.x=gx; node.y=gy; drawAllLinks() });
@@ -1251,6 +1327,15 @@ const Graph = (()=>{
     addLink(WS.portSel.nodeId, WS.portSel.portName, nodeId, portName);
     WS.portSel.el.classList.remove('sel'); WS.portSel=null;
   }
+
+  // NEW: utility to find wires attached to a port
+  function connectedWires(nodeId, side, portName){
+    return WS.wires.filter(w =>
+      (side==='out' && w.from.node===nodeId && w.from.port===portName) ||
+      (side==='in'  && w.to.node===nodeId   && w.to.port===portName)
+    );
+  }
+
   function addLink(fromNodeId, fromPort, toNodeId, toPort){
     if(WS.wires.find(w=>w.from.node===fromNodeId && w.from.port===fromPort && w.to.node===toNodeId && w.to.port===toPort)) return;
     const w={ id:uid(), from:{node:fromNodeId,port:fromPort}, to:{node:toNodeId,port:toPort}, path:null };
@@ -1267,6 +1352,97 @@ const Graph = (()=>{
 
     drawAllLinks(); saveGraph();
   }
+
+  // NEW: temp/retarget visuals + drag lifecycle
+  function clearTempLink(){
+    if(WS.drag?.kind && WS.drag.path){
+      if(WS.drag.kind==='retarget') WS.drag.path.setAttribute('stroke-dasharray','');
+      else WS.drag.path.remove();
+    }
+    WS.drag=null;
+  }
+  function clientToWorkspace(cx,cy){
+    const ws=WS.el.getBoundingClientRect();
+    return { x:cx-ws.left, y:cy-ws.top };
+  }
+  function drawTempFromPort(from, mx, my){
+    if(!WS.drag?.path) return;
+    const a=portCenter(from.nodeId, from.side, from.portName);
+    const b={x:mx,y:my};
+    const dx=Math.max(40, Math.abs(b.x-a.x)*0.5);
+    WS.drag.path.setAttribute('d', `M ${a.x},${a.y} C ${a.x+dx},${a.y} ${b.x-dx},${b.y} ${b.x},${b.y}`);
+  }
+  function drawRetarget(wire, grabSide, mx, my){
+    if(!wire?.path) return;
+    const a = (grabSide==='from') ? {x:mx,y:my} : portCenter(wire.from.node,'out',wire.from.port);
+    const b = (grabSide==='to')   ? {x:mx,y:my} : portCenter(wire.to.node,'in', wire.to.port);
+    const dx=Math.max(40, Math.abs(b.x-a.x)*0.5);
+    wire.path.setAttribute('d', `M ${a.x},${a.y} C ${a.x+dx},${a.y} ${b.x-dx},${b.y} ${b.x},${b.y}`);
+  }
+  function finishAnyDrag(cx, cy){
+    try{ WS.drag?._cleanup && WS.drag._cleanup() }catch{}
+    const el=document.elementFromPoint(cx, cy);
+
+    // new from OUTPUT -> drop on INPUT
+    if(WS.drag?.kind==='new'){
+      const target=el && (el.closest?.('.wp-port.in'));
+      if(target){
+        const toNode=target.closest('.node')?.dataset?.id;
+        const toPort=target.dataset.port;
+        if(toNode && toPort && toNode!==WS.drag.fromNodeId) addLink(WS.drag.fromNodeId, WS.drag.fromPort, toNode, toPort);
+        else setBadge('Invalid drop target', false);
+      }
+      clearTempLink(); return;
+    }
+
+    // new from INPUT -> drop on OUTPUT
+    if(WS.drag?.kind==='newFromInput'){
+      const target=el && (el.closest?.('.wp-port.out'));
+      if(target){
+        const fromNode=target.closest('.node')?.dataset?.id;
+        const fromPort=target.dataset.port;
+        if(fromNode && fromPort && fromNode!==WS.drag.toNodeId) addLink(fromNode, fromPort, WS.drag.toNodeId, WS.drag.toPort);
+        else setBadge('Invalid drop target', false);
+      }
+      clearTempLink(); return;
+    }
+
+    // retarget existing wire
+    if(WS.drag?.kind==='retarget'){
+      const wire=WS.wires.find(w=>w.id===WS.drag.wireId);
+      if(!wire){ clearTempLink(); return }
+      const need=(WS.drag.grabSide==='from')?'.wp-port.in':'.wp-port.out';
+      const target=el && (el.closest?.(need));
+      wire.path?.setAttribute('stroke-dasharray','');
+
+      if(!target){ // drop to nowhere -> delete
+        removeWireById(wire.id);
+        clearTempLink(); return;
+      }
+
+      const hitNodeId=target.closest('.node')?.dataset?.id;
+      const hitPort=target.dataset?.port;
+      if(!hitNodeId || !hitPort){ clearTempLink(); return }
+
+      if(WS.drag.grabSide==='from'){
+        // moved output end -> must drop on input
+        if(!target.classList.contains('in')){ setBadge('Drop on an input port', false); clearTempLink(); drawAllLinks(); return }
+        if(hitNodeId===wire.from.node){ setBadge('Cannot self-link', false); clearTempLink(); drawAllLinks(); return }
+        wire.to={ node:hitNodeId, port:hitPort };
+      }else{
+        // moved input end -> must drop on output
+        if(!target.classList.contains('out')){ setBadge('Drop on an output port', false); clearTempLink(); drawAllLinks(); return }
+        if(hitNodeId===wire.to.node){ setBadge('Cannot self-link', false); clearTempLink(); drawAllLinks(); return }
+        wire.from={ node:hitNodeId, port:hitPort };
+      }
+
+      syncRouterFromWS(); saveGraph(); drawAllLinks(); clearTempLink(); setBadge('Wire reconnected');
+      return;
+    }
+
+    clearTempLink();
+  }
+
   function portCenter(nodeId, side, portName){
     const n=WS.nodes.get(nodeId); if(!n) return {x:0,y:0};
     const dot=n.el.querySelector(`.wp-port.${side}[data-port="${CSS.escape(portName)}"] .dot`);
@@ -1300,7 +1476,6 @@ const Graph = (()=>{
   // persistence
   function saveGraph(){
     const data={ nodes:Array.from(WS.nodes.values()).map(n=>({id:n.id,type:n.type,x:n.x,y:n.y})), links:WS.wires.map(w=>({from:w.from,to:w.to})), nodeConfigs:{} };
-    // pack node configs for export
     for(const n of WS.nodes.values()){ const rec=NodeStore.load(n.id); if(rec) data.nodeConfigs[n.id]=rec }
     LS.set('graph.workspace', data);
   }
@@ -1308,7 +1483,6 @@ const Graph = (()=>{
     const data=LS.get('graph.workspace', null);
     WS.el.innerHTML=''; WS.svg.innerHTML=''; WS.nodes.clear(); WS.wires=[];
     if(!data){
-      // first boot: create a simple chain ASR→LLM→TTS
       const a=addNode('ASR', 90, 200);
       const l=addNode('LLM', 380, 180);
       const t=addNode('TTS', 680, 200);
@@ -1318,7 +1492,6 @@ const Graph = (()=>{
       saveGraph();
       return;
     }
-    // restore node‑local configs first
     if(data.nodeConfigs){ for(const [id, obj] of Object.entries(data.nodeConfigs)){ if(obj && obj.type && obj.config) NodeStore.saveObj(id, obj) } }
 
     for(const n of (data.nodes||[])){
@@ -1411,9 +1584,22 @@ const Graph = (()=>{
   }
   function onResize(){ drawAllLinks() }
 
+  // NEW: easy cancel of linking/drag
+  function cancelLinking(){
+    if(WS.portSel?.el) WS.portSel.el.classList.remove('sel');
+    WS.portSel=null;
+    clearTempLink();
+    setBadge('Linking cancelled');
+  }
+  function bindWorkspaceCancels(){
+    window.addEventListener('keydown',(e)=>{ if(e.key==='Escape' && (WS.portSel || WS.drag)) cancelLinking() });
+    WS.el.addEventListener('pointerdown',(e)=>{ if(e.target===WS.el && (WS.portSel || WS.drag)) cancelLinking() });
+    WS.svg.addEventListener('pointerdown',(e)=>{ if(e.target===WS.svg && (WS.portSel || WS.drag)) cancelLinking() });
+  }
+
   function init(){
     WS.el=qs('#workspace'); WS.svg=qs('#linksSvg');
-    bindToolbar(); bindModal();
+    bindToolbar(); bindModal(); bindWorkspaceCancels(); // NEW
     loadGraph();
     window.addEventListener('resize', onResize);
     setTimeout(drawAllLinks, 50);
