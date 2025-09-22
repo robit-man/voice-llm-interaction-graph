@@ -12,400 +12,387 @@
   </a>
 </p>
 
-<img width="1886" height="1261" alt="image" src="https://github.com/user-attachments/assets/a763f0bf-652e-4a83-a4f2-51cc1c3682b0" />
+<img width="1754" height="1267" alt="image" src="https://github.com/user-attachments/assets/321f08fc-5fe9-4f26-9a62-cf3fb3e4ea77" />
 
-
-This frontend is a **full, resilient, browser-only control surface** for three services and an end-to-end voice assistant:
-
-* **LLM / Ollama Relay** (`/api/*`)
-* **ASR (speech-to-text)** (`/health`, `/models`, `/recognize`, `/recognize/stream/*`)
-* **TTS (text-to-speech)** (`/health`, `/models`, `/speak`, `/models/pull`)
-* **Graph/Wiring page:** routes **ASR → LLM → TTS**, streams every hop, and shows live state.
-
-All pages speak to backends over either **HTTP(S)** or **NKN Relay (DM)** and **autosave** their settings and UI state in `localStorage` so your layout and choices survive reloads.
+A lightweight, browser-first visual editor for wiring realtime speech + language + speech pipelines. Drag nodes, connect ports with SVG splines, stream delta tokens sentence-by-sentence to TTS, and persist your graph to LocalStorage. Works with direct HTTP backends or NKN relays.
 
 ---
 
-## 0) Quick Start
+## ✨ Features
 
-### One Liner Quickstart
-```bash
-git clone https://github.com/robit-man/voice-llm-interaction-graph.git && cd voice-llm-interaction-graph && python3 -u server.py
-```
-then ctrl + click the link generated in console, otherwise, proceed with the following command list.
+- **Visual graph editor**
+  - Drag nodes on a snap grid, draw cubic-bezier wires between ports.
+  - Click-click linking *and* drag-to-connect with **retarget** support.
+  - One incoming link per input (exclusive); outputs can **fan-out** to many inputs.
+  - Alt/Ctrl/Meta-click on ports or wires to **disconnect**, or double-click a wire to delete.
+  - Import/Export your entire workspace as JSON.
 
-1. **Serve the static files** (any static host works):
+- **Three built-in node types**
+  - **ASR** (Speech-to-Text) → outputs: `partial`, `phrase`, `final`
+  - **LLM** (Chat/Reasoning) → inputs: `prompt`, `system`; outputs: `delta`, `final`, `memory`
+  - **TTS** (Text-to-Speech) → input: `text`; modes: `stream` (raw PCM) or `file` (OGG)
 
-   ```bash
-   python3 server.py
+- **Streaming you can hear**
+  - **LLM delta streaming is sentence-aware.** Partial tokens are buffered and flushed at end-of-sentence delimiters (`.?!` / newlines), so **TTS speaks coherent sentences**, not choppy word-by-word.
+  - Robust **frame ordering** over NKN: chunks carry sequence numbers and are reassembled in order.
+
+- **Per-node dynamic settings**
+  - Compact modal builds form fields from each node type’s schema.
+  - Values persist in `LocalStorage` (via `NodeStore`) and export cleanly.
+
+- **Transport flexibility**
+  - Direct `fetch()` over HTTP(S), or **NKN relay** streaming (`CFG.transport==='nkn'`).
+  - NDJSON chat streaming for LLM, raw 16-bit PCM streaming for TTS.
+
+- **Audio pipeline**
+  - Low-latency `ScriptProcessorNode` queue with underrun protection, preroll/spacer frames, and **linear resampling** to the AudioContext rate.
+
+---
+
+## 🧭 Quick Start
+
+1. **Serve the app** with any static server (e.g. `vite`, `webpack dev server`, `python -m http.server`).  
+   If you serve over **https**, make sure your backends are also **https** (or use a same-origin proxy).
+
+2. **Configure backends** in the node settings:
+   - **LLM** must expose `POST /api/chat` (see API contracts below).
+   - **TTS** must expose `POST /speak`.
+   - (Optional) **ASR** endpoint for your STT service.
+
+3. **Open the graph editor**:
+   - Use the toolbar buttons: **Add ASR**, **Add LLM**, **Add TTS**.
+   - Wire **ASR.final → LLM.prompt → TTS.text** for a voice assistant.
+   - Click ⚙ on any node to set `base`, `api`, `model`, etc.
+   - Press ▶ on an **ASR** node to acquire the mic for that node.
+
+4. **Talk!**  
+   Watch **LLM.delta** update while TTS speaks **sentence by sentence**.
+
+---
+
+## 🖱️ Graph Editor Primer
+
+### Ports & Wires
+- **Click-click**: Click an **output** port to select it, then click an **input** to connect.
+- **Drag-from port**:
+  - Drag from an **output** to an **input** to create a link.
+  - Drag from an **input** (that already has a wire) to **retarget** it to a different output.
+- **Retarget existing wire**: Drag either end to a new port; ordering and exclusivity rules are enforced.
+- **Disconnect**
+  - Alt/Ctrl/Meta-click a **port** to delete all wires attached to that port.
+  - Alt/Ctrl/Meta-click a **wire** (or double-click) to delete just that wire.
+- **Cancel**: `Esc` or click on empty workspace/SVG to cancel an in-progress link/drag.
+
+### Rules
+- **Inputs are exclusive** (one incoming wire max). Creating a new link to an input replaces the old one.
+- **Outputs fan-out** (one output may drive many inputs).
+- **No self-links** (node → same node).
+
+### Persistence
+- Graph state is saved under `LS.set('graph.workspace', ...)`:
+  ```json
+  {
+    "nodes": [{ "id": "nabc123", "type": "LLM", "x": 380, "y": 180 }],
+    "links": [{ "from": {"node":"nasr","port":"final"}, "to": {"node":"nllm","port":"prompt"} }],
+    "nodeConfigs": {
+      "nllm": { "type":"LLM", "config": { "base":"http://127.0.0.1:11434", "model":"llama3", "stream": true } }
+    }
+  }
+````
+
+* **Export**/**Import** from the toolbar to move graphs between machines.
+
+---
+
+## 🔌 Dataflow & Router
+
+The app uses a small `Router` to connect publishers to subscribers:
+
+* **Wire keys** are strings:
+  `from:  "<nodeId>:out:<portName>"`
+  `to:    "<nodeId>:in:<portName>"`
+* Graph changes call `Router.render()` with `Router.wires = [ {from, to}, ... ]`.
+* Nodes **register** inputs:
+
+  ```js
+  Router.register(`${node.id}:in:prompt`, someElement, (payload) => LLM.onPrompt(node.id, payload));
+  ```
+* Nodes **emit** outputs:
+
+  ```js
+  Router.sendFrom(nodeId, 'delta', { nodeId, type: 'text', text: chunk });
+  Router.sendFrom(nodeId, 'final', { nodeId, text: sentence, eos: true });
+  ```
+
+This indirection lets you add new node types and wire them without coupling.
+
+---
+
+## 🧩 Node Types & Settings
+
+All settings UIs are generated from the **schema** entries defined in `TYPES`.
+
+### ASR (Speech-to-Text)
+
+* **Outputs**: `partial`, `phrase`, `final`
+* **Key settings**
+
+  | Key                                                | Description                                             |
+  | -------------------------------------------------- | ------------------------------------------------------- |
+  | `base`                                             | Base URL of ASR service (e.g., `http://localhost:8126`) |
+  | `relay`                                            | NKN relay address (optional)                            |
+  | `api`                                              | API key/header (optional)                               |
+  | `model`                                            | Model or preset (`base/small/medium/large-v3`)          |
+  | `mode`                                             | `fast` or `accurate`                                    |
+  | `rate`, `chunk`, `live`                            | Audio capture params                                    |
+  | `rms`, `hold`, `emaMs`                             | VAD parameters                                          |
+  | `phraseOn`, `phraseMin`, `phraseStable`, `silence` | Phrase detection                                        |
+  | `prevWin`, `prevStep`, `prevModel`                 | Preview streaming hints                                 |
+  | `prompt`                                           | Biasing prompt for decoding                             |
+
+> The ASR node shows a VU bar, a ▶/■ button to own/release the mic, and scroll areas for `partial` & `final` text.
+
+### LLM (Chat / Reasoning)
+
+* **Inputs**: `prompt`, `system`
+* **Outputs**: `delta`, `final`, `memory`
+* **Key settings**
+
+  | Key             | Description                                              |
+  | --------------- | -------------------------------------------------------- |
+  | `base`          | Base URL of LLM service (e.g., `http://127.0.0.1:11434`) |
+  | `relay`         | NKN relay (optional)                                     |
+  | `api`           | API key/header (optional)                                |
+  | `model`         | Model name (e.g., `llama3`, `gpt-…`)                     |
+  | `stream`        | `true` to enable NDJSON streaming                        |
+  | `useSystem`     | Include a system message in prompts                      |
+  | `system`        | System prompt text                                       |
+  | `memoryOn`      | Keep chat memory per node                                |
+  | `persistMemory` | Persist memory to storage                                |
+  | `maxTurns`      | Cap on remembered user turns                             |
+
+#### How streaming works (LLM)
+
+* **Direct HTTP**: `POST /api/chat` returns `application/x-ndjson`, lines like:
+
+  ```json
+  {"delta":" Hel"}
+  {"delta":"lo"}
+  {"done":true,"final":"Hello."}
+  ```
+* **NKN**: same payload, but lines can arrive **out of order**; each NDJSON line is tagged with a sequence number by the relay. The LLM client uses `expected/seq/stash` to restore order before parsing NDJSON.
+* **Sentence Mux**: token deltas are buffered until an end-of-sentence delimiter is seen, then **a complete sentence** is emitted via:
+
+  * `Router.sendFrom(nodeId, 'final', { nodeId, text: sentence, eos: true })`
+  * Optionally, a **delta mirror** of the same sentence is emitted on `delta` to keep old listeners happy.
+
+> Result: TTS receives **full sentences**, not distracting word-by-word fragments.
+
+#### Memory
+
+When `memoryOn` is enabled:
+
+* Sliding window of up to `maxTurns` user messages (and their following assistant replies) is kept.
+* Optional system message is preserved at position 0.
+* After each completion, memory is updated and emitted on `memory` (`{type:'updated', size:n}`).
+
+### TTS (Text-to-Speech)
+
+* **Input**: `text`
+* **Modes**: `stream` (default), `file` (`audio/ogg`)
+* **Key settings**
+
+  | Key     | Description                                        |
+  | ------- | -------------------------------------------------- |
+  | `base`  | Base URL (e.g., `http://localhost:8123`)           |
+  | `relay` | NKN relay (optional)                               |
+  | `api`   | API key/header (optional)                          |
+  | `model` | Voice/Model (`glados_piper_medium` or a file name) |
+  | `mode`  | `stream` or `file`                                 |
+
+#### How streaming works (TTS)
+
+* **Streaming** expects raw **16-bit signed PCM little-endian** at **22,050 Hz** chunks from `POST /speak`:
+
+  * Direct HTTP: reads `ReadableStream` bytes, handles odd-length boundaries with a carry-over buffer.
+  * NKN: chunks can arrive out of order; the TTS client reorders by `seq`, then decodes to `Int16`, converts to `Float32`, **resamples** if needed, and enqueues to the audio ring buffer.
+* The TTS node inserts a **tiny preroll** (\~40ms) and **spacer** (\~30ms) between sentences to keep timing natural.
+* **File** mode fetches an OGG blob and plays it in an `<audio>` element injected into the node body.
+
+---
+
+## 🛠️ Backend API Contracts
+
+These are reference contracts; adjust to your server as needed.
+
+### `POST /api/chat` (LLM)
+
+* **Headers**
+
+  * `Accept: application/x-ndjson` (for `stream:true`)
+  * `Content-Type: application/json`
+  * `Authorization: Bearer <api>` (optional)
+* **Request**
+
+  ```json
+  {
+    "model": "llama3",
+    "messages": [
+      {"role":"system", "content":"You are helpful."},
+      {"role":"user", "content":"Say hello."}
+    ],
+    "stream": true
+  }
+  ```
+* **NDJSON Stream**
+
+  * Token deltas as `{"delta":" ..."}` or provider-specific shapes that include `message.content`.
+  * Final line may include `{"done":true,"final":"..."}`
+* **Non-streaming**
+
+  ```json
+  { "message": { "content": "Hello." } }
+  ```
+
+### `POST /speak` (TTS)
+
+* **Streaming (raw PCM)**
+
+  * **Request**: `{"text":"Hello world.","mode":"stream","format":"raw","model":"..." }`
+  * **Response body**: a raw byte stream of **s16le @ 22050Hz** split into arbitrary chunk sizes. (Over NKN, chunks are relayed with sequence numbers.)
+* **File (OGG)**
+
+  * **Request**: `{"text":"Hello world.","mode":"file","format":"ogg","model":"..."}`
+  * **Response (either)**:
+
+    * `{ "files":[{"url":"/files/abc.ogg"}] }` (server-hosted)
+      → client fetches `base + url` as blob
+    * `{ "audio_b64": "<base64>" }` (inlined)
+
+> Make sure your server sends the appropriate **CORS** headers if accessed cross-origin (see Troubleshooting).
+
+---
+
+## 🔐 CORS, HTTPS & NKN
+
+* If your app is served over **HTTPS**, browsers will **block HTTP** calls to backends (mixed content). Use **HTTPS** backends or a same-origin reverse proxy.
+* Cross-origin backends must respond to **preflight (OPTIONS)** and include:
+
+  ```
+  Access-Control-Allow-Origin: https://your-app-origin
+  Access-Control-Allow-Methods: POST, OPTIONS
+  Access-Control-Allow-Headers: Content-Type, Authorization, Accept, X-Relay-Stream
+  ```
+* **NKN** transport (`CFG.transport === 'nkn'`) tunnels requests/responses. The client attaches `X-Relay-Stream: chunks` for chunked streams and uses per-chunk **sequence numbers** to reconstruct order before decoding.
+
+---
+
+## 🧪 Common Flows
+
+### Voice Assistant (ASR → LLM → TTS)
+
+1. Add **ASR**, **LLM**, **TTS** nodes.
+2. Wire: `ASR.final → LLM.prompt → TTS.text`.
+3. Configure **LLM** base/model, **TTS** base/model.
+4. Press **▶** on the ASR node to start the mic.
+5. Speak; you’ll hear sentence-by-sentence TTS responses.
+
+### Text Chat to TTS
+
+* Wire `LLM.final → TTS.text`.
+* Send a synthetic `prompt` into the LLM input via your own node or a test harness; the TTS will speak each sentence.
+
+---
+
+## ⚙️ Developer Notes
+
+### File/Module Highlights
+
+* `Graph` — workspace state (`WS`), node DOM, spline wires, linking logic, import/export, persistence.
+* `TYPES` — node registry & **form schema** (drives settings modal).
+* `Router` — little event bus binding `from` → `to` across wires.
+* `NodeStore` — per-node config persistence (loads/saves objects keyed by node id).
+* `ASR`, `LLM`, `TTS` — runtime modules that interface with your backends.
+
+### Adding a New Node Type
+
+1. Add an entry in `TYPES`:
+
+   ```js
+   TYPES.MyNode = {
+     title: 'MyNode',
+     inputs: [{name:'inA'}],
+     outputs: [{name:'outB'}],
+     schema: [{key:'base', label:'Base URL', type:'text'}]
+   }
    ```
-
-   Open `http://localhost:<port>` (default 443).
-
-2. **Pick a transport (top-left Settings):**
-
-   * **HTTP(S) Direct** when the browser can reach the service URL (e.g., `http://127.0.0.1:11434`).
-   * **NKN Relay (DM)** when you want to reach a service *through* an NKN relay host.
-     Paste the **full NKN address** (including identifier) of your relay.
-
-3. **Save**. All pages remember:
-
-   * transport, base URL, relay address(es), API key / session, and per-page controls.
-
-4. **Check Health / Load Models** to confirm the transport is good.
-
-5. Use either page standalone, or go to **Graph** to wire **Mic → ASR → LLM → TTS** end-to-end.
+2. In `makeNodeEl`, inputs call `Router.register(...)` with your handler.
+3. Emit with `Router.sendFrom(nodeId, 'outB', payload)`.
+4. Persist optional config via `NodeStore.ensure/update/load`.
 
 ---
 
-## 1) Transports, Auth & Resilience
+## 🧹 Text Sanitization (TTS)
 
-### 1.1 Transports
+Before sending text to your TTS, the app:
 
-* **HTTP(S) Direct:** normal `fetch` with streaming support (NDJSON, SSE, or raw bytes).
-* **NKN Relay:** the UI wraps your request in an NKN DM with `event: "http.request"`.
-  Streaming responses are split into **ordered DM “chunks”** (begin/chunk/keepalive/end) and reassembled in order in the browser.
-
-> **Tip:** When using NKN, **Base URL** must be correct **from the relay host’s point of view** (e.g., `http://127.0.0.1:11434` if the relay runs next to Ollama).
-
-### 1.2 Auth
-
-* The UI automatically sets either:
-
-  * `Authorization: Bearer <session_key>` (after a “Handshake → Session”), or
-  * `X-API-Key: <your_key>` if provided.
-* For **multipart uploads**, we never force `Content-Type` (browser sets boundaries correctly).
-* For NKN streaming we set `X-Relay-Stream: chunks` to opt into binary chunking.
-
-### 1.3 Resilience & Backoff
-
-* **NKN MultiClient** with ID (`webui`, `asr-webui`):
-
-  * Exponential reconnect, watchdog pings, stale connections recycle.
-  * Ordered chunk assembly and **late chunk grace** to smooth stream tails.
-* **HTTP health loops** ping `/api/version` (Ollama) or `/health` (ASR/TTS).
-* **Model polls** run in the background with adaptive intervals and retry backoff.
-
-### 1.4 Making NKN the Default Transport
-
-* Each page remembers your last selection. To make NKN “default on first load” you can:
-
-  * Pre-seed localStorage (before first open):
-
-    ```js
-    localStorage.setItem('ollama.transport','nkn');
-    localStorage.setItem('asr.transport','nkn');
-    localStorage.setItem('tts.transport','nkn');
-    ```
-  * Or in the JS, change the initial `S.transport` default to `'nkn'`.
+* Normalizes (`NFKC`), unifies quotes, strips URLs/markdown, compresses whitespace.
+* Collapses ellipses to a single period, trims punctuation spacing.
+* Purpose: produce **cleaner prosody** across TTS engines.
 
 ---
 
-## 2) Page: **Ollama Relay Playground**
+## 🔊 Audio Pipeline Details
 
-A full client for **/api/** with live token streaming and model administration.
-
-### 2.1 Settings
-
-* **Transport, Base URL, Relay NKN Address, API Key**
-  Keys saved under:
-
-  * `ollama.transport`, `ollama.base`, `ollama.relayAddr`, `ollama.apiKey`
-
-### 2.2 Inspect
-
-* **GET /api/tags** — models list (auto-populates selectors elsewhere).
-* **GET /api/ps**, **GET /api/version**
-
-### 2.3 Generate (POST /api/generate)
-
-* **Stream true/false**. When `true`, prints **NDJSON** deltas live.
-* Optional **format** (`"json"` or JSON schema) and **options** (JSON).
-* Output panel scrolls and appends in real time.
-
-### 2.4 Chat (POST /api/chat)
-
-* **Model selector** is auto-populated from `/api/tags`.
-* **Sessions per model** are stored under `ollama.chat.v1`:
-
-  * New/Rename/Delete, **Download JSON** of messages, **Upload** messages.
-* **Streaming** prints assistant tokens **as they arrive** (both HTTP & NKN).
-  UI uses an “in-flight assistant bubble” that grows with each token, then persists to session.
-
-### 2.5 Model Admin
-
-* **Create / Show / Copy / Delete / Pull / Push**, each wired to the corresponding `/api/*` endpoint and with streaming log panels for long operations.
-
-### 2.6 Embeddings
-
-* Modern `/api/embed` and legacy `/api/embeddings`.
-
-### 2.7 Blobs
-
-* **HEAD /api/blobs/\:digest** and **POST** file uploads (HTTP preferred for big files).
-  When on NKN, large files are prevented by design.
-
-### 2.8 Status/Logs
-
-* Top-right **status badge** switches colors and messages (OK/Warn/Error).
-* **Status / Logs** card shows recent activity.
+* `AudioContext` + `ScriptProcessorNode(4096,1,1)` for simplicity and wide compatibility.
+* Queue of `Float32Array` buffers (range `[-1,1]`).
+* Converts `Int16LE` → `Float32` and **linearly resamples** if server != device rate.
+* Tracks `underruns` for debugging; adds a tiny **preroll** and **inter-sentence spacer**.
 
 ---
 
-## 3) Page: **ASR Service**
+## 🩹 Troubleshooting
 
-Minimal UI for **file transcription** and **live mic streaming** with on-screen partial/final captions.
+### “Failed to fetch” (LLM or TTS)
 
-### 3.1 Settings
+* Usually **network/CORS/mixed content** rather than a 4xx/5xx. Check:
 
-* **Transport, Base URL, Relay, API Key** saved under:
+  * `CFG.<node>.base` includes protocol (`http://` or `https://`).
+  * If your page is **https**, **don’t** call a `http://` backend.
+  * Server exposes `POST /api/chat` and/or `POST /speak`.
+  * CORS headers for **OPTIONS** + **POST** include your app’s origin.
+  * For NKN, ensure the relay address is reachable and `CFG.transport==='nkn'`.
 
-  * `asr.transport`, `asr.base`, `asr.relayAddr`, `asr.apiKey`
-* Optional **Handshake → Session** (saves `asr.sessionKey`, `asr.sessionExp`).
+### No audio or choppy audio
 
-### 3.2 Models & Health
+* TTS server must send **16-bit little-endian PCM** at **22,050 Hz** for streaming mode.
+* If you switch models mid-stream, flush or pause TTS to avoid mixed sample rates.
+* Look at `underruns` in logs; increase preroll time or ensure the backend latency is stable.
 
-* **/health** shows service status.
-* **/models** autocompletes `Use Model` (e.g., `base`, `small`, `large-v3`).
+### Sentences arriving out of order
 
-### 3.3 File Transcription
-
-* Pick an audio file, optional **format** & **sample rate** hints, and an optional **prompt** to bias decoding.
-* For HTTP: multipart upload to `/recognize`.
-* For NKN: JSON with `{body_b64, format?, sample_rate?, prompt?}` to `/recognize`.
-* UI prints:
-
-  * **Text** (flattened transcript),
-  * **JSON** (full result with segments),
-  * **Log** of the request/response.
-
-### 3.4 Live Mic → ASR
-
-* Controls: **target sample rate**, **stream chunk size**, optional **prompt**.
-* Start:
-
-  * Begins an ASR **session** (`/recognize/stream/start`), shows **Session** indicator.
-  * WebAudio **RMS VU meter** animates live.
-  * PCM16LE frames are posted to `/recognize/stream/:sid/audio?format=pcm16&sr=…` as the buffer fills.
-* **Events stream** (HTTP SSE or NKN chunked):
-
-  * **Partial** captions update in the **left bubble** (`livePartial`).
-  * **Final** utterances append to the **right column** (`finalList`) as separate bubbles.
-  * Errors also print to the log panel.
-* Stop:
-
-  * Sends `/recognize/stream/:sid/end`, closes event stream, clears buffers.
-
-> The **Graph** page adds **ASR VAD gates** and **finalization thresholds** (RMS/timeout) for when to cut and pass text onward.
+* Ensure you’re using the built-in LLM/TTS NKN paths. They already **reorder by sequence** with `expected/stash/seen`.
+* If you’ve written a custom relay, attach a monotonically increasing `seq` to each chunk/line.
 
 ---
 
-## 4) Page: **TTS Service**
+## 🧰 Keyboard & Mouse Cheatsheet
 
-Generate audio **to a file**, **stream live to the browser** (raw PCM), or **play on server**.
-
-### 4.1 Settings
-
-* Stored under: `tts.transport`, `tts.base`, `tts.relayAddr`, `tts.apiKey` (+ session if handshaken).
-
-### 4.2 Models
-
-* **/models** populates the datalist for `Use Model`.
-* **Pull Voice** downloads an ONNX + JSON combo into the server’s `./voices`.
-
-### 4.3 Generate → File
-
-* **/speak** with `mode: "file"`; after JSON returns the file URL, the UI **fetches the blob** and shows:
-
-  * `<audio>` player,
-  * download link,
-  * mime/size metadata.
-* Works via **HTTP** or **NKN** (the latter streams the bytes as ordered DMs and reassembles).
-
-### 4.4 Stream → Browser (Live)
-
-* **/speak** with `mode: "stream"`, **format: "raw"** (PCM16 mono 22.05k).
-* HTTP: reads `ReadableStream` bytes and feeds a **ScriptProcessorNode** ring buffer.
-* NKN: receives chunked DMs, reorders, and feeds the same ring buffer.
-* The page shows:
-
-  * **AudioContext sample rate**, **buffered sample count** (live),
-  * a **log panel** for stream begin/end/errors.
-* **Stop** aborts the fetch and clears audio buffers.
-
-### 4.5 Play on Server
-
-* **/speak** with `mode: "play"`; server plays via `aplay/ffplay`.
+* **Linking**: Click output → click input (or drag between ports).
+* **Retarget wire**: Drag an existing wire end to a different compatible port.
+* **Delete wire**: Double-click a wire, or Alt/Ctrl/Meta-click it.
+* **Disconnect a port**: Alt/Ctrl/Meta-click the port.
+* **Cancel**: `Esc`, or click empty workspace/SVG.
+* **Move node**: Drag the header (snaps to 14px grid).
 
 ---
 
-## 5) Page: **Graph / Wiring (ASR → LLM → TTS)**
+## 📦 Import / Export Format
 
-A visual “patch bay” that connects sources and sinks. The default recipe is:
+Use the toolbar to export or import `realtime-graph.json`. It contains:
 
-```
-Mic → ASR (partial/final) → LLM (prompted chat) → TTS → Speakers
-```
+* Node layout (`id`, `type`, `x`, `y`)
+* Links (`from`, `to`)
+* Per-node configs (`nodeConfigs[id] = { type, config }`)
 
-### 5.1 What it Guarantees
-
-* **NKN routing option is the default** once saved — and the graph will honor the same transport/auth for **all endpoints** (ASR, LLM, TTS).
-  Use the Settings panel to select **NKN**, Save once; it persists across reloads.
-* **Parallel relay strategy (NKN):** when configured with multiple relay addresses, the client can DM **up to 3 relays in parallel**:
-
-  * **Requests fan-out** to all configured relays.
-  * **First valid response wins**; for streams, chunks are deduped and merged in order.
-  * Health pings & stale detection recycle unhealthy paths.
-
-> If you run a single relay, just use one address. If you run 2–3 for redundancy, paste them all.
-
-### 5.2 Controls & Persistence
-
-* **Wire Mode** toggle: on → endpoint cards become “nodes” you can wire.
-
-  * The connection set is saved to `localStorage` and restored on reload.
-* **ASR Thresholds:** set **RMS gate** and **max silence timeout** to decide *when* to finalize utterances:
-
-  * RMS below gate for `N ms` ⇒ cut turn and emit **final** text downstream.
-  * All values auto-save.
-* **Model selectors** for ASR / LLM / TTS **auto-populate** from their `/models` or `/api/tags` and are saved.
-* **System & prompt templates** for LLM are saved; you can inject the final transcript into the prompt via `${text}` or `${transcript}` in the Graph settings.
-* **Live state panes**:
-
-  * **ASR**: live VU, partial caption (left), final list (right).
-  * **LLM**: **streaming tokens** are appended to a growing bubble, then committed.
-  * **TTS**: raw PCM **queues and plays live**; shows queued samples.
-
-### 5.3 How Data Flows
-
-1. **Mic → ASR**
-   PCM16 chunks posted at fixed cadence. SSE/NKN events deliver:
-
-   * `asr.partial` → updates “Partial” bubble.
-   * `asr.final` → appended to “Final” list **and** enqueued into the **LLM**.
-
-2. **ASR Final → LLM**
-   The final utterance gets templated into your **LLM messages**:
-
-   * Prepend optional **system** message.
-   * Append **user** message with the transcript text.
-   * **stream\:true** so NDJSON deltas arrive line by line.
-   * The UI prints each **delta token** as it arrives; the message is then saved to the current **LLM session**.
-
-3. **LLM → TTS**
-   After the assistant completes (or on partials, if “speak while streaming” is on):
-
-   * Text is sent to **/speak** with `mode:"stream"`, and **audio plays** immediately in the browser.
-   * If you prefer: `mode:"file"` (batch playback after full render) is also supported.
-
-4. **Status/Recovery**
-
-   * Any transport error prints to the node’s **log panel**.
-   * NKN stale: auto recycle with exponential backoff.
-   * Model lists refresh in the background; selectors keep your previous choice if still present.
-
-### 5.4 Useful Variants
-
-* **Barge-in:** if a new ASR final arrives while TTS is playing, stop the current stream and start the new answer.
-* **Hands-free (VAD gate):** RMS gate + silence timeout ⇒ auto turn taking.
-* **Token-sync speech:** option to begin TTS after the first *N* tokens (reduces latency further).
-
----
-
-## 6) LocalStorage Map (what gets saved)
-
-* **Ollama:**
-  `ollama.transport`, `ollama.base`, `ollama.relayAddr`, `ollama.apiKey`, `ollama.chat.v1` (per-model sessions)
-* **ASR:**
-  `asr.transport`, `asr.base`, `asr.relayAddr`, `asr.apiKey`, `asr.sessionKey`, `asr.sessionExp`
-* **TTS:**
-  `tts.transport`, `tts.base`, `tts.relayAddr`, `tts.apiKey`, `tts.sessionKey`, `tts.sessionExp`
-* **Graph:**
-  `graph.transport`, `graph.base.*` (per service), `graph.relayAddrs` (array),
-  `graph.wires.v1` (connections), `graph.asr.thresholds`,
-  `graph.llm.model`, `graph.llm.system`, `graph.llm.stream`,
-  `graph.tts.model`, `graph.tts.mode`, `graph.tts.volume`, etc.
-
-> Names may differ slightly by build; keys are simple strings and safe to inspect/clear in DevTools.
-
----
-
-## 7) Streaming Protocols & Parsers (under the hood)
-
-* **LLM**: NDJSON lines (`{"message":{"content":"..."}}`, `{"response":"..."}`, `{"done":true}`)
-  The UI strips known end-of-turn tokens (e.g., `</s>`) from deltas.
-* **ASR**: SSE events over HTTP (`event: asr.partial / asr.final`) or JSON lines chunked via NKN.
-  Parser collects `data:` blocks until blank line, then `JSON.parse`.
-* **TTS**: Raw **PCM16LE mono 22.05kHz** audio frames streamed over HTTP or chunked via NKN.
-  Browser combines bytes, converts to Float32, resamples if needed, then writes to a ScriptProcessor queue.
-
----
-
-## 8) Health, Debugging & Recovery
-
-* **Status badge** (top right) flips colors (OK/Warn/Error). Hovering is not required — messages are printed inline.
-* Each long operation (model pull/push/create, streaming) has a **log panel**.
-* **Network online/offline** events trigger toasts & gentle refresh.
-* **Visibility change** (tab hidden/shown) debounces background polling.
-
----
-
-## 9) Security & CORS
-
-* When using **HTTP(S)**:
-
-  * If the service is on a different origin, enable CORS for the static host origin or use a reverse proxy.
-* When using **NKN**, the browser never hits the service directly — your relay does; set **Base URL** for the relay’s local network view.
-
----
-
-## 10) Extending
-
-* **Add a new endpoint**: copy one of the transport-aware helpers (`getJSON`, `callJSON`, `postBytes`, or `nknFetchJSON`) and wire a button/handler.
-* **Add a new node in Graph**: define the node’s inputs/outputs, UI panel, and register a small adapter that:
-
-  1. translates inbound messages to the node’s request,
-  2. starts its stream,
-  3. forwards deltas or finals downstream, and
-  4. updates the node’s display/log.
-
----
-
-## 11) FAQ
-
-**Q: I switched transports and nothing happened.**
-A: Click **Save**. The choice is persisted and immediately applied; background loops restart.
-
-**Q: Model lists are empty.**
-A: Check **Health** and **/models** or **/api/tags** in the Inspect panel. On NKN, ensure the **Base URL** is reachable from the relay host.
-
-**Q: ASR partials show, but no finals.**
-A: Increase the **silence timeout** or raise the **RMS gate** so the ASR knows when to cut.
-
-**Q: TTS stutters on low-power devices.**
-A: That’s the WebAudio callback starving — reduce `stream chunk` sizes upstream or start speaking after a small prebuffer (Graph option).
-
-**Q: How do I force NKN on first boot?**
-A: Pre-seed `localStorage` keys (see §1.4) or set the JS defaults to `'nkn'` before shipping.
-
----
-
-## 12) Known Good Versions
-
-* **nkn-sdk** browser build: `1.3.6` (pinned in the HTML)
-* Browsers: recent **Chromium/Firefox** (WebAudio + Streams supported)
-
----
-
-## 13) Minimal End-to-End Checklist (Voice Assistant)
-
-1. Open **ASR**, **TTS**, **Ollama** pages once to **Save** base URLs/relays and confirm **Health**.
-2. In **Graph**:
-
-   * Transport = **NKN** (or HTTP if local), Save.
-   * Pick **ASR model**, **LLM model** (auto-filled), **TTS voice** (auto-filled).
-   * Set **RMS gate** and **silence** (start with gate `0.02`, silence `650 ms`).
-   * Turn **Wire Mode** on; ensure the default path is **Mic → ASR → LLM → TTS**.
-3. Click **Start** (Mic permission is requested once).
-4. **Speak** → see **Partial** on left, **Final** on right, **LLM tokens** stream in the middle, **TTS** plays live.
-5. Click **Stop** to end the session.
+> Import replaces your current graph; export is a straightforward JSON dump.
