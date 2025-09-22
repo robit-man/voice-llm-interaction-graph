@@ -40,7 +40,7 @@
     button.ghost{background:transparent;border:1px solid rgba(255,255,255,.2);color:var(--text)}
     button.danger{background:linear-gradient(180deg,rgba(255,107,107,.95),rgba(255,107,107,.7));color:#280a0a}
     .code{font-family:var(--mono);font-size:12px;background:#04070b;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:10px;white-space:pre-wrap;max-height:260px;overflow:auto}
-    .bubble{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);padding:10px;border-radius:12px}
+    .bubble{background:rgba(255,255,255,.06);max-height: 150px;overflow: auto;border:1px solid rgba(255,255,255,.12);padding:10px;border-radius:12px}
     .muted{color:var(--muted);font-size:12px}
     .vu{height:8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);overflow:hidden}
     .vu>b{display:block;height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#eab308,#ef4444)}
@@ -65,12 +65,13 @@
     .wp-port{--sz:12px;display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;cursor:pointer}
     .wp-port .dot{width:var(--sz);height:var(--sz);border-radius:50%;border:2px solid rgba(255,255,255,.8);background:rgba(255,255,255,.15)}
     .wp-port.out .dot{box-shadow:0 0 0 2px rgba(102,224,255,.25)}
+    .right .out{justify-content: flex-end;}
     .wp-port.in .dot{box-shadow:0 0 0 2px rgba(168,255,96,.25)}
     .wp-port.sel .dot{background:var(--accent)}
     /* Modal */
     .modal.hidden{display:none}
     .modal{position:fixed;inset:0;z-index:1000}
-    .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.5);backdrop-filter:blur(2px)}
+    .modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.5);backdrop-filter:blur(20px)}
     .modal-panel{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(880px,calc(100% - 28px));background:var(--panel);border:1px solid rgba(255,255,255,.18);border-radius:16px;padding:14px;max-height:calc(100vh - 80px);overflow:auto}
     .modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
     .modal-title{font-weight:800;font-size:15px}
@@ -152,7 +153,7 @@
 
 <!-- SETTINGS MODAL (dynamic contents) -->
 <div id="settingsModal" class="modal hidden" aria-hidden="true">
-  <div class="modal-backdrop"></div>
+  <div class="modal-backdrop" id="closeBackdrop"></div>
   <div class="modal-panel">
     <div class="modal-head">
       <div class="modal-title">Node Settings</div>
@@ -525,8 +526,7 @@ const LLM = {
     const memory = Array.isArray(cfg.memory)?cfg.memory.slice():[];
 
     function buildMessages(latest){
-      const msgs=[];
-      let iStart=0;
+      const msgs=[]; let iStart=0;
       if(sysUse && sysTxt) msgs.push({role:'system', content:sysTxt});
       if(memOn){
         if(memory.length && memory[0].role==='system'){
@@ -539,10 +539,10 @@ const LLM = {
       if(memOn){
         let userCount=msgs.filter(m=>m.role==='user').length;
         while(userCount>maxTurns){
-          const si = (msgs[0]?.role==='system')?1:0;
-          const uIdx = msgs.findIndex((m,i)=>i>=si && m.role==='user');
+          const si=(msgs[0]?.role==='system')?1:0;
+          const uIdx=msgs.findIndex((m,i)=>i>=si && m.role==='user');
           if(uIdx<0) break;
-          msgs.splice(uIdx, 1);
+          msgs.splice(uIdx,1);
           if(msgs[uIdx]?.role==='assistant') msgs.splice(uIdx,1);
           userCount--;
         }
@@ -551,14 +551,36 @@ const LLM = {
     }
 
     const messages = buildMessages(text);
-    const mux = createSentenceMux(250);
+    const mux = createSentenceMux(250); // unchanged: sentence segmentation for TTS
     let full='';
 
-    // emitters
+    // ---- NEW: tiny helper to stream to the LLM node UI -----------------
+    const outEl = node.el?.querySelector('[data-llm-out]');
+    let uiLines = [];   // committed (sentence-complete) lines
+    let uiBuf   = '';   // in-flight chunk buffer
+    const setOut = (txt)=>{
+      if(!outEl) return;
+      outEl.textContent = txt || '';
+      outEl.scrollTop = outEl.scrollHeight;
+    };
+    // clear the window for this prompt
+    setOut(''); uiLines=[]; uiBuf='';
+    // --------------------------------------------------------------------
+
+    // emitters (unchanged routing, now sentence-sized)
     const emitSentenceFinal = (s)=>{ Router.sendFrom(nodeId,'final',{nodeId,text:s,eos:true}); };
     const emitSentenceDelta = (s)=>{ Router.sendFrom(nodeId,'delta',{nodeId,type:'text',text:s,eos:true}); };
-    // one callback for mux that preserves existing 'final' behavior AND adds sentence-sized 'delta'
-    const emitBoth = (s)=>{ emitSentenceDelta(s); emitSentenceFinal(s); };
+    const emitBoth = (s)=>{
+      emitSentenceDelta(s);
+      emitSentenceFinal(s);
+      // also commit a line to the node UI on sentence boundary
+      const line = String(s||'').trim();
+      if(line){
+        uiLines.push(line);
+        uiBuf = '';
+        setOut(uiLines.join('\n'));
+      }
+    };
 
     try{
       if(stream){
@@ -571,11 +593,18 @@ const LLM = {
               (typeof obj.delta==='string' && obj.delta) || '';
             if(!delta && (obj.done||obj.complete) && typeof obj.final==='string') delta=obj.final;
             if(!delta && (obj.done||obj.complete) && obj.message && typeof obj.message.content==='string') delta=obj.message.content;
+
             if(delta){
-              const clean=stripEOT(delta);
-              full+=clean;
-              // CHANGED: no more word/token deltas here
-              mux.push(clean, emitBoth); // sentences only
+              const clean = stripEOT(delta);
+              full += clean;
+
+              // show live tokens/words in the UI
+              uiBuf += clean;
+              // display committed sentences + the in-flight buffer
+              setOut( uiLines.length ? (uiLines.join('\n') + '\n' + uiBuf) : uiBuf );
+
+              // but only SEND sentences downstream to TTS
+              mux.push(clean, emitBoth);
             }
           }catch{}
         });
@@ -608,10 +637,16 @@ const LLM = {
       }else{
         const data = await Net.postJSON(base,'/api/chat',{model,messages,stream:false}, api, viaNkn, relay, 120000);
         full = stripEOT((data?.message?.content)||(data?.response)||'') || '';
-        if(full){ mux.push(full+'\n', emitBoth); mux.flush(emitBoth); }
+        if(full){
+          // Show entire response and also send sentence-sized (mux will emit once)
+          uiLines = [full.trim()]; uiBuf='';
+          setOut(uiLines.join('\n'));
+          mux.push(full+'\n', emitBoth);
+          mux.flush(emitBoth);
+        }
       }
 
-      // persist memory per node (unchanged)
+      // memory (unchanged)
       if(cfg.memoryOn){
         const newMem = (memory || []).slice();
         if(sysUse && sysTxt && !(newMem.length && newMem[0].role==='system')){
@@ -635,25 +670,44 @@ const LLM = {
       log(`[llm ${nodeId}] ${e.message}`);
     }
   },
+
   onSystem(nodeId, payload){
     const s=String(payload && (payload.text??payload.prompt??payload) || '').trim();
-    const rec=NodeStore.ensure(nodeId,'LLM'); NodeStore.update(nodeId, { system:s, useSystem:true });
+    NodeStore.update(nodeId, { system:s, useSystem:true });
     setBadge(`System prompt set on ${nodeId}`);
   }
 };
 
-
 /* ============================================================
-   TTS (node-scoped)
+   TTS (node-scoped) — streaming waveform + file toggle
    ============================================================ */
 const TTS = {
-  _state:new Map(), // nodeId -> { ac, node, q:[], queued:0, sr, underruns, audioEl?, chain }
+  _state:new Map(), // nodeId -> { ac, node, an, q:[], queued:0, sr, underruns, audioEl?, canvas?, ctx?, raf?, _resizeObs?, chain }
+
   ensure(nodeId){
     let s=this._state.get(nodeId);
     if(s) return s;
+
     const ac = new (window.AudioContext||window.webkitAudioContext)({ sampleRate:22050 });
     const node = ac.createScriptProcessor(4096,1,1);
-    const st = { ac, node, q:[], queued:0, sr:ac.sampleRate||22050, underruns:0, chain:Promise.resolve() }; // NEW: chain
+
+    // Analyser for waveform
+    const an = ac.createAnalyser();
+    an.fftSize = 2048;
+    an.smoothingTimeConstant = 0.85;
+
+    // Connect ScriptProcessor -> Analyser -> Destination
+    node.connect(an);
+    an.connect(ac.destination);
+
+    const st = {
+      ac, node, an,
+      q:[], queued:0, sr:ac.sampleRate||22050, underruns:0,
+      canvas:null, ctx:null, raf:null, _resizeObs:null,
+      audioEl:null,
+      chain:Promise.resolve()
+    };
+
     node.onaudioprocess=(e)=>{
       const out=e.outputBuffer.getChannelData(0);
       if(!st.q.length){ out.fill(0); st.underruns++; return }
@@ -666,26 +720,124 @@ const TTS = {
         st.queued -= take; off+=take; need-=take;
       }
     };
-    node.connect(ac.destination);
+
+    // UI: attach both, but we toggle visibility based on mode
     const box = Graph.getNode(nodeId)?.el?.querySelector('.body');
-    if(box && !box.querySelector('audio')){
-      const au=document.createElement('audio'); au.controls=true; au.style.marginTop='6px'; box.appendChild(au); st.audioEl=au;
+    if(box){
+      // Waveform canvas (hidden by default; shown in stream mode)
+      if(!box.querySelector('[data-tts-vis]')){
+        const cv=document.createElement('canvas');
+        cv.dataset.ttsVis='';                          // marker
+        cv.style.cssText='margin-top:6px;width:100%;height:56px;background:rgba(0,0,0,.25);border-radius:4px;display:none';
+        box.appendChild(cv);
+        st.canvas=cv; st.ctx=cv.getContext('2d');
+      }
+      // File playback audio element (hidden during streaming)
+      if(!box.querySelector('audio')){
+        const au=document.createElement('audio');
+        au.controls=true; au.style.marginTop='6px';
+        box.appendChild(au); st.audioEl=au;
+      }else{
+        st.audioEl=box.querySelector('audio');
+      }
     }
+
     this._state.set(nodeId, st);
     return st;
   },
-  f32FromI16(int16){ const f=new Float32Array(int16.length); for(let i=0;i<int16.length;i++) f[i]=Math.max(-1,Math.min(1,int16[i]/32768)); return f },
+
+  // visualizer helpers
+  _startVis(st){
+    if(!st.canvas || !st.ctx || !st.an || st.raf) return;
+    // responsive sizing
+    const resize = ()=>{
+      try{
+        const b = st.canvas.getBoundingClientRect();
+        st.canvas.width  = Math.max(150, Math.floor(b.width));
+        st.canvas.height = 56;
+      }catch{}
+    };
+    if('ResizeObserver' in window){
+      st._resizeObs = new ResizeObserver(resize);
+      st._resizeObs.observe(st.canvas.parentNode || st.canvas);
+    }
+    resize();
+
+    const buf = new Uint8Array(st.an.fftSize);
+    const draw = ()=>{
+      st.raf = requestAnimationFrame(draw);
+      st.an.getByteTimeDomainData(buf);
+
+      const {width:w, height:h} = st.canvas;
+      const c = st.ctx;
+      c.clearRect(0,0,w,h);
+      c.fillStyle = 'rgba(0,0,0,0.15)';
+      c.fillRect(0,0,w,h);
+
+      c.lineWidth = 2;
+      c.strokeStyle = 'rgba(255,255,255,0.9)';
+      c.beginPath();
+
+      const step = Math.max(1, Math.floor(buf.length / w));
+      for(let x=0, i=0; x<w; x++, i+=step){
+        const v = buf[i] / 128.0;      // 0..255 -> ~0..2
+        const y = (v * 0.5) * h;       // center around midline
+        if(x===0) c.moveTo(x, y);
+        else c.lineTo(x, y);
+      }
+      c.stroke();
+
+      // midline
+      c.strokeStyle = 'rgba(255,255,255,0.25)';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(0, h/2);
+      c.lineTo(w, h/2);
+      c.stroke();
+    };
+    draw();
+  },
+  _stopVis(st){
+    if(st.raf){ cancelAnimationFrame(st.raf); st.raf=null; }
+    if(st._resizeObs){ try{ st._resizeObs.disconnect(); }catch{} st._resizeObs=null; }
+  },
+  _showStreamUI(st){
+    if(st.audioEl) st.audioEl.style.display='none';
+    if(st.canvas){ st.canvas.style.display='block'; this._startVis(st); }
+  },
+  _showFileUI(st){
+    this._stopVis(st);
+    if(st.canvas) st.canvas.style.display='none';
+    if(st.audioEl) st.audioEl.style.display='block';
+  },
+
+  f32FromI16(int16){
+    const f=new Float32Array(int16.length);
+    for(let i=0;i<int16.length;i++) f[i]=Math.max(-1,Math.min(1,int16[i]/32768));
+    return f;
+  },
   resampleLinear(input, fromRate, toRate){
-    if(fromRate===toRate) return input; const ratio=toRate/fromRate; const L=Math.round(input.length*ratio);
-    const out=new Float32Array(L); for(let i=0;i<L;i++){ const pos=i/ratio; const i0=Math.floor(pos), i1=Math.min(i0+1,input.length-1); const t=pos-i0; out[i]=input[i0]*(1-t)+input[i1]*t } return out;
+    if(fromRate===toRate) return input;
+    const ratio=toRate/fromRate, L=Math.round(input.length*ratio);
+    const out=new Float32Array(L);
+    for(let i=0;i<L;i++){
+      const pos=i/ratio, i0=Math.floor(pos), i1=Math.min(i0+1,input.length-1), t=pos-i0;
+      out[i]=input[i0]*(1-t)+input[i1]*t;
+    }
+    return out;
   },
   enqueue(st, f32){ st.q.push(f32); st.queued+=f32.length },
 
   _sanitize(s){
-    if(!s) return ''; try{s=s.normalize('NFKC')}catch{}; s=s.replace(/[\u2019\u2018]/g,"'");
-    s=s.replace(/\bhttps?:\/\/\S+/gi,' '); s=s.replace(/[*_~`]+/g,' ');
-    s=s.replace(/\u2026/g,'.').replace(/\.{3,}/g,'.'); s=s.replace(/[“”"«»‹›„‟]/g,' ');
-    s=s.replace(/[\[\](){}<>]/g,' '); return s.replace(/[^\S\r\n]+/g,' ').replace(/\s*([.,?!])\s*/g,'$1 ').trim();
+    if(!s) return '';
+    try{s=s.normalize('NFKC')}catch{}
+    s=s.replace(/[\u2019\u2018]/g,"'");
+    s=s.replace(/\bhttps?:\/\/\S+/gi,' ');
+    s=s.replace(/[*_~`]+/g,' ');
+    s=s.replace(/\u2026/g,'.').replace(/\.{3,}/g,'.');
+    s=s.replace(/[“”"«»‹›„‟]/g,' ');
+    s=s.replace(/[\[\](){}<>]/g,' ');
+    return s.replace(/[^\S\r\n]+/g,' ').replace(/\s*([.,?!])\s*/g,'$1 ').trim();
   },
 
   async onText(nodeId, payload){
@@ -695,14 +847,19 @@ const TTS = {
     const viaNkn=(CFG.transport==='nkn');
     const mode=cfg.mode||'stream';
 
-    const raw=(payload && (payload.text||payload))||''; const eos=!!(payload && payload.eos);
+    const raw=(payload && (payload.text||payload))||'';
+    const eos=!!(payload && payload.eos);
     if(!raw) return;
+
     const st=this.ensure(nodeId);
-    const clean=this._sanitize(String(raw)); if(!clean) return;
+    const clean=this._sanitize(String(raw));
+    if(!clean) return;
 
     const speakOnce = async ()=>{
       if(mode==='stream'){
         await st.ac.resume();
+        this._showStreamUI(st);
+
         // short preroll
         this.enqueue(st, new Float32Array(Math.round((st.sr||22050)*0.04)));
 
@@ -732,7 +889,7 @@ const TTS = {
                   if(seq===expected){ handleBytes(u8); expected++; flush() }
                   else if(seq>expected){ stash.set(seq,u8) }
                 },
-                onEnd:()=>{ flush(); } // FIX: ensure any held frames are emitted in order
+                onEnd:()=>{ flush(); } // ensure held frames are emitted in order
               },
               120000
             );
@@ -743,24 +900,34 @@ const TTS = {
             while(true){
               const {value,done}=await rd.read(); if(done) break; if(!value || !value.byteLength) continue;
               const merged=new Uint8Array(leftover.length+value.length); merged.set(leftover,0); merged.set(value,leftover.length);
-              const even=(merged.length>>1)<<1; if(even){ handleBytes(merged.subarray(0,even)); leftover=merged.subarray(even) } else leftover=merged;
+              const even=(merged.length>>1)<<1;
+              if(even){ handleBytes(merged.subarray(0,even)); leftover=merged.subarray(even) }
+              else leftover=merged;
             }
-            // no special flush needed here; odd tail is <1 sample and discarded
           }
         }catch(e){ log(`[tts ${nodeId}] ${e.message}`) }
+
         // small inter-sentence spacer
         this.enqueue(st, new Float32Array(Math.round((st.sr||22050)*0.03)));
+
       }else{
-        // file(ogg) path
+        // file (ogg) path
+        this._showFileUI(st);
         try{
           const data = await Net.postJSON(base, '/speak', { text:clean, mode:'file', format:'ogg', ...(model?{model,voice:model}:{}) }, api, viaNkn, relay, 10*60*1000);
           let blob=null, mime='audio/ogg';
-          if(data?.files?.[0]?.url){ const fileUrl=base.replace(/\/+$/,'')+data.files[0].url; blob=await Net.fetchBlob(fileUrl, viaNkn, relay, api); mime=blob.type||mime }
-          else if(data?.audio_b64){ const u8=b64ToBytes(data.audio_b64); blob=new Blob([u8],{type:mime}) }
-          else throw new Error('no audio');
+          if(data?.files?.[0]?.url){
+            const fileUrl=base.replace(/\/+$/,'')+data.files[0].url;
+            blob=await Net.fetchBlob(fileUrl, viaNkn, relay, api);
+            mime=blob.type||mime;
+          }else if(data?.audio_b64){
+            const u8=b64ToBytes(data.audio_b64);
+            blob=new Blob([u8],{type:mime});
+          }else{
+            throw new Error('no audio');
+          }
           const url=URL.createObjectURL(blob);
           if(st.audioEl){
-            // wait for this one to finish before the next (serialize file mode too)
             await new Promise(res=>{
               const onEnd=()=>{ st.audioEl.removeEventListener('ended', onEnd); res() };
               st.audioEl.addEventListener('ended', onEnd);
@@ -771,11 +938,12 @@ const TTS = {
       }
     };
 
-    // FIX: serialize utterances per node to prevent interleaving of frames
+    // Serialize utterances per node to prevent interleaving of frames
     st.chain = st.chain.then(speakOnce).catch(e=>log(`[tts ${nodeId}] ${e?.message||e}`));
     return st.chain;
   }
 };
+
 
 
 /* ============================================================
@@ -1182,20 +1350,28 @@ const Graph = (()=>{
           <button class="gear" title="Remove">🗑</button>
         </div>
       </div>
-      <div class="body">
-        <div class="ports">
-          <div class="side left"></div>
-          <div class="side right"></div>
-        </div>
-        ${node.type==='ASR'?`
-          <div class="vu" style="margin-top:8px"><b></b></div>
-          <div class="muted" style="margin-top:6px;">Partial</div>
-          <div class="bubble" data-asr-partial style="min-height:28px"></div>
-          <div class="muted" style="margin-top:6px;">Finals</div>
-          <div class="code" data-asr-final style="min-height:60px;max-height:120px"></div>
-        `:''}
-        ${node.type==='TTS'?`<audio controls style="margin-top:6px"></audio>`:''}
+    <div class="body">
+      <div class="ports">
+        <div class="side left"></div>
+        <div class="side right"></div>
       </div>
+
+      ${node.type==='ASR'?`
+        <div class="vu" style="margin-top:8px"><b></b></div>
+        <div class="muted" style="margin-top:6px;">Partial</div>
+        <div class="bubble" data-asr-partial style="min-height:28px"></div>
+        <div class="muted" style="margin-top:6px;">Finals</div>
+        <div class="code" data-asr-final style="min-height:60px;max-height:120px"></div>
+      `:''}
+
+      ${node.type==='LLM'?`
+        <div class="muted" style="margin-top:6px;">Output</div>
+        <div class="code" data-llm-out
+            style="min-height:60px;max-height:120px;overflow:auto;white-space:pre-wrap"></div>
+      `:''}
+
+      ${node.type==='TTS'?`<audio controls style="margin-top:6px"></audio>`:''}
+    </div>
     `;
 
     // status row (NKN & type)
@@ -1535,6 +1711,7 @@ const Graph = (()=>{
   function bindModal(){
     qs('#closeSettings')?.addEventListener('click', closeSettings);
     qs('#cancelSettings')?.addEventListener('click', closeSettings);
+    qs('#closeBackdrop')?.addEventListener('click', closeSettings);
     qs('#saveSettings')?.addEventListener('click',(e)=>{
       e.preventDefault();
       const form=qs('#settingsForm'); const nodeId=form.dataset.nodeId;
