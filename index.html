@@ -47,6 +47,48 @@
       padding: 18px
     }
 
+    .header-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center
+    }
+
+    .transport-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 18px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, .25);
+      background: transparent;
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s ease, color .2s ease, border .2s ease, box-shadow .2s ease;
+    }
+
+    .transport-btn .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      box-shadow: 0 0 12px currentColor;
+    }
+
+    .transport-btn.active {
+      border-color: rgba(102, 224, 255, .65);
+      box-shadow: 0 0 18px rgba(102, 224, 255, 0.25);
+    }
+
+    @media(max-width: 640px) {
+      .brand-text {
+        display: none;
+      }
+      .card{
+        padding:unset!important;border:0px!important;background:unset!important;
+      }
+    }
+
     option {
       background: #000a;
     }
@@ -62,12 +104,12 @@
       height: 36px
     }
 
-    h1 {
+    .brand-text h1 {
       margin: 0;
       font-size: 18px
     }
 
-    .hint {
+    .brand-text .hint {
       color: var(--muted);
       font-size: 12px
     }
@@ -164,6 +206,37 @@
       resize: vertical
     }
 
+    .input-with-btn {
+      display: flex;
+      gap: 8px;
+      align-items: center
+    }
+
+    .input-with-btn > :first-child {
+      flex: 1 1 auto
+    }
+
+    .input-with-btn button {
+      flex: 0 0 auto;
+    }
+
+    #qrModal video {
+      width: 100%;
+      max-height: 320px;
+      border-radius: 12px;
+      background: black
+    }
+
+    #qrModal canvas {
+      display: none
+    }
+
+    .qr-body {
+      display: flex;
+      flex-direction: column;
+      gap: 12px
+    }
+
     button {
       background: white;
       color: #000000;
@@ -254,12 +327,14 @@
       background:
         linear-gradient(var(--panel2), var(--panel2)),
         repeating-linear-gradient(0deg, transparent 0 28px, rgba(255, 255, 255, .06) 28px 29px),
-        repeating-linear-gradient(90deg, transparent 0 28px, rgba(255, 255, 255, .06) 28px 29px)
+        repeating-linear-gradient(90deg, transparent 0 28px, rgba(255, 255, 255, .06) 28px 29px);
+      touch-action: none;
     }
 
     #workspace {
       position: absolute;
-      inset: 0
+      inset: 0;
+      touch-action: none;
     }
 
     #wsCanvas {
@@ -270,6 +345,7 @@
       height: 100%;
       transform-origin: 0 0;
       will-change: transform;
+      touch-action: none;
     }
 
 
@@ -305,6 +381,40 @@
       border-bottom: 1px solid rgba(255, 255, 255, .12);
       border-top-left-radius: 14px;
       border-top-right-radius: 14px
+    }
+
+    .node .titleRow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 auto;
+    }
+
+    .node .node-transport {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, .25);
+      background: transparent;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .2s ease, color .2s ease, border .2s ease, box-shadow .2s ease;
+    }
+
+    .node .node-transport .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      box-shadow: 0 0 10px currentColor;
+    }
+
+    .node .node-transport.active {
+      border-color: rgba(102, 224, 255, .65);
+      box-shadow: 0 0 12px rgba(102, 224, 255, 0.25);
     }
 
     .node .head:active {
@@ -366,6 +476,16 @@
       border-radius: 50%;
       border: 2px solid rgba(255, 255, 255, .8);
       background: rgba(255, 255, 255, .15)
+    }
+
+    .wp-port.drop-hover {
+      border-radius: 999px;
+      outline: 2px solid rgba(102, 224, 255, .6);
+      outline-offset: 3px;
+    }
+
+    .wp-port.drop-hover .dot {
+      box-shadow: 0 0 12px rgba(102, 224, 255, .8);
     }
 
     .wp-port.out .dot {
@@ -445,6 +565,7 @@
     }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/nkn-sdk@1.3.6/dist/nkn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 </head>
 
 <body>
@@ -457,30 +578,17 @@
             stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </div>
-      <div>
+      <div class="brand-text">
         <h1>Inference Graph Playground</h1>
         <div class="hint">ASR → LLM → TTS · HTTP or NKN Endpoints · Node‑Isolated</div>
       </div>
     </div>
-    <div id="status" class="badge"><span class="dot warn"></span><span>Booting…</span></div>
+    <div class="header-actions">
+      <button id="transportToggle" class="transport-btn">HTTP</button>
+    </div>
   </header>
 
   <main>
-    <!-- GLOBAL -->
-    <section class="card span-12">
-      <h2>Global</h2>
-      <div class="row">
-        <label>Transport</label>
-        <select id="transport">
-          <option value="http">HTTP(S)</option>
-          <option value="nkn">NKN Relay</option>
-        </select>
-        <button id="nknConnect">Connect NKN</button>
-        <button class="ghost" id="nknDisconnect">Disconnect</button>
-        <button class="secondary" id="saveAll">Save</button>
-        <span class="muted">NKN: <b id="nknInfo">disconnected</b></span>
-      </div>
-    </section>
 
     <!-- GRAPH WORKSPACE -->
     <section class="card span-12" id="graphCard">
@@ -503,15 +611,10 @@
       </div>
     </section>
 
-    <!-- WIRES -->
+    <!-- ROUTES -->
     <section class="card span-12">
-      <h2>Wires</h2>
-      <div class="row">
-        <button class="secondary" id="wireToggle">Wire Mode: <b id="wireState">ON</b></button>
-        <button class="ghost" id="clearWires">Clear</button>
-        <span class="muted">Click source then destination to connect.</span>
-      </div>
-      <div id="wiresBox" class="code" style="margin-top:8px;min-height:54px"></div>
+      <h2>Routes</h2>
+      <div id="wiresBox" class="code" style="min-height:54px"></div>
     </section>
 
     <!-- LOGS -->
@@ -540,6 +643,22 @@
     </div>
   </div>
 
+  <div id="qrModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" id="qrBackdrop"></div>
+    <div class="modal-panel" style="max-width:420px;">
+      <div class="modal-head">
+        <div class="modal-title">Scan NKN Address</div>
+        <button class="ghost" id="qrClose">✕</button>
+      </div>
+      <div class="qr-body">
+        <video id="qrVideo" autoplay playsinline muted></video>
+        <canvas id="qrCanvas" width="0" height="0"></canvas>
+        <div class="help">Align the QR code within the frame. The scanned value will populate the field automatically.</div>
+        <button class="ghost" type="button" id="qrStop">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     /* ============================================================
        Helpers & persistence
@@ -563,14 +682,164 @@
     const b64ToBytes = (b64) => { const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++)u8[i] = bin.charCodeAt(i); return u8 };
     function j(x) { try { return JSON.stringify(x, null, 2) } catch { return String(x) } }
     function log(s) { const b = qs('#logBox'); if (!b) return; b.textContent = (b.textContent + '\n' + s).trim().slice(-9000); b.scrollTop = b.scrollHeight }
-    function setBadge(msg, ok = true) { const el = qs('#status'); if (!el) return; el.innerHTML = `<span class="dot ${ok ? 'ok' : 'err'}"></span><span>${msg}</span>` }
+    function setBadge(msg, ok = true) { const el = qs('#logBox'); if (!el) return; log(msg); }
+
+    function updateTransportButton() {
+      const btn = qs('#transportToggle');
+      if (!btn) return;
+      btn.innerHTML = '';
+
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      const label = document.createElement('span');
+
+      if (CFG.transport === 'nkn') {
+        btn.classList.add('active');
+        label.textContent = 'NKN';
+        if (Net?.nkn?.ready) {
+          dot.classList.add('ok');
+          btn.title = Net.nkn.addr || 'NKN relay address';
+        } else {
+          dot.classList.add(Net?.nkn?.client ? 'warn' : 'err');
+          btn.title = 'NKN relay connecting';
+        }
+      } else {
+        btn.classList.remove('active');
+        label.textContent = 'HTTP';
+        dot.classList.add('err');
+        btn.title = 'HTTP transport';
+      }
+
+      btn.append(dot, label);
+    }
+
+    const QRScan = {
+      modal: null,
+      video: null,
+      canvas: null,
+      ctx: null,
+      stream: null,
+      raf: null,
+      target: null,
+      onResult: null,
+      ready: false
+    };
+
+    function setupQrScanner() {
+      if (QRScan.ready) return;
+      QRScan.modal = qs('#qrModal');
+      QRScan.video = qs('#qrVideo');
+      QRScan.canvas = qs('#qrCanvas');
+      if (QRScan.canvas) QRScan.ctx = QRScan.canvas.getContext('2d');
+      qs('#qrClose')?.addEventListener('click', () => closeQrScanner());
+      qs('#qrStop')?.addEventListener('click', () => closeQrScanner());
+      qs('#qrBackdrop')?.addEventListener('click', () => closeQrScanner());
+      window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && QRScan.modal && !QRScan.modal.classList.contains('hidden')) closeQrScanner(); });
+      QRScan.ready = true;
+    }
+
+    async function openQrScanner(targetInput, onResult) {
+      setupQrScanner();
+      if (!QRScan.modal) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setBadge('Camera not available', false); return; }
+      if (!window.jsQR) { setBadge('QR library missing', false); return; }
+      try { closeQrScanner(); } catch { }
+      QRScan.target = targetInput || null;
+      QRScan.onResult = (typeof onResult === 'function') ? onResult : null;
+      QRScan.modal.classList.remove('hidden');
+      QRScan.modal.setAttribute('aria-hidden', 'false');
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        QRScan.stream = stream;
+        if (QRScan.video) {
+          QRScan.video.srcObject = stream;
+          await QRScan.video.play().catch(() => { });
+        }
+        QRScan.raf = requestAnimationFrame(scanQrFrame);
+      } catch (err) {
+        closeQrScanner();
+        setBadge('Camera access denied', false);
+      }
+    }
+
+    function stopQrStream() {
+      if (QRScan.raf) cancelAnimationFrame(QRScan.raf);
+      QRScan.raf = null;
+      if (QRScan.stream) {
+        QRScan.stream.getTracks().forEach(t => { try { t.stop() } catch { } });
+      }
+      QRScan.stream = null;
+      if (QRScan.video) {
+        QRScan.video.pause();
+        QRScan.video.srcObject = null;
+      }
+    }
+
+    function closeQrScanner() {
+      stopQrStream();
+      if (QRScan.modal) {
+        QRScan.modal.classList.add('hidden');
+        QRScan.modal.setAttribute('aria-hidden', 'true');
+      }
+      QRScan.target = null;
+      QRScan.onResult = null;
+    }
+
+    function scanQrFrame() {
+      if (!QRScan.video || !QRScan.canvas || !QRScan.ctx) {
+        QRScan.raf = requestAnimationFrame(scanQrFrame);
+        return;
+      }
+      if (QRScan.video.readyState < 2) {
+        QRScan.raf = requestAnimationFrame(scanQrFrame);
+        return;
+      }
+      const vw = QRScan.video.videoWidth || 0;
+      const vh = QRScan.video.videoHeight || 0;
+      if (!vw || !vh) {
+        QRScan.raf = requestAnimationFrame(scanQrFrame);
+        return;
+      }
+      if (QRScan.canvas.width !== vw) QRScan.canvas.width = vw;
+      if (QRScan.canvas.height !== vh) QRScan.canvas.height = vh;
+      QRScan.ctx.drawImage(QRScan.video, 0, 0, vw, vh);
+      try {
+        const img = QRScan.ctx.getImageData(0, 0, vw, vh);
+        const code = window.jsQR ? window.jsQR(img.data, vw, vh) : null;
+        if (code && code.data) {
+          const txt = code.data.trim();
+            if (txt) {
+              if (QRScan.target) {
+                QRScan.target.value = txt;
+                QRScan.target.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+              if (QRScan.onResult) {
+                try { QRScan.onResult(txt); } catch { }
+              }
+              const form = qs('#settingsForm');
+              const nodeId = form?.dataset?.nodeId;
+              if (nodeId) {
+                try {
+                  NodeStore.setRelay(nodeId, NodeStore.load(nodeId)?.type || 'LLM', txt);
+                  if (typeof Graph !== 'undefined' && Graph.refreshTransportButtons) Graph.refreshTransportButtons();
+                  if (typeof updateTransportButton === 'function') updateTransportButton();
+                  if (typeof saveGraph === 'function') saveGraph();
+                } catch { }
+              }
+            setBadge('QR scanned');
+            closeQrScanner();
+            return;
+          }
+        }
+      } catch { }
+      QRScan.raf = requestAnimationFrame(scanQrFrame);
+    }
 
     /* ============================================================
        Global CFG (only global flags; all node configs are per‑node)
        ============================================================ */
     const CFG = LS.get('graph.cfg', {
       transport: 'http',
-      wireMode: true,
       wires: []      // [{ from:'nodeId:out:port', to:'nodeId:in:port' }]
     });
     function saveCFG() { LS.set('graph.cfg', CFG) }
@@ -619,8 +888,9 @@
         if (!window.nkn || !window.nkn.MultiClient) { setBadge('nkn-sdk missing', false); return }
         const c = new window.nkn.MultiClient({ identifier: 'graph', numSubClients: 4, wsConnHeartbeatTimeout: 60000 });
         this.nkn.client = c;
-        c.on('connect', () => { this.nkn.ready = true; this.nkn.addr = c.addr || ''; const i = qs('#nknInfo'); if (i) i.textContent = `connected • ${this.nkn.addr.slice(0, 10)}…`; setBadge('NKN ready') });
-        c.on('close', () => { this.nkn.ready = false; const i = qs('#nknInfo'); if (i) i.textContent = 'connecting…' });
+        updateTransportButton();
+        c.on('connect', () => { this.nkn.ready = true; this.nkn.addr = c.addr || ''; updateTransportButton(); setBadge('NKN ready') });
+        c.on('close', () => { this.nkn.ready = false; updateTransportButton(); });
         c.on('message', (a, b) => {
           let p = (a && typeof a === 'object' && a.payload !== undefined) ? a.payload : b;
           try {
@@ -736,7 +1006,6 @@
         }
         if (!el) return;
         el.addEventListener('click', () => {
-          if (!CFG.wireMode) return;
           if (!this.sel) { this.sel = key; el.classList.add('sel'); return }
           const from = this.sel; this.clearSel();
           if (from === key) return;
@@ -803,7 +1072,13 @@
         this.saveCfg(id, cur.type, cfg);
         return cfg;
       },
-      erase(id) { LS.del(this.key(id)) }
+      erase(id) { LS.del(this.key(id)) },
+      setRelay(id, type, relay) {
+        const cur = this.ensure(id, type);
+        const cfg = { ...(cur.config || {}), relay: relay };
+        this.saveCfg(id, type, cfg);
+        return cfg;
+      }
     };
 
     /* ============================================================
@@ -1850,6 +2125,37 @@
 
       const uid = () => ('n' + Math.random().toString(36).slice(2, 8));
 
+      function refreshNodeTransport(nodeId) {
+        const node = WS.nodes.get(nodeId);
+        if (!node) return;
+        const btn = node.el?.querySelector('.node-transport');
+        if (!btn) return;
+        const rec = NodeStore.ensure(node.id, node.type);
+        const relay = (rec.config?.relay || '').trim();
+        btn.innerHTML = '';
+        btn.classList.remove('active');
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        const label = document.createElement('span');
+        label.className = 'label';
+        label.textContent = 'NKN';
+        if (relay) {
+          btn.classList.add('active');
+          if (CFG.transport === 'nkn' && Net?.nkn?.ready && Net.nkn.addr) dot.classList.add('ok');
+          else if (CFG.transport === 'nkn') dot.classList.add('warn');
+          else dot.classList.add('warn');
+          btn.title = relay;
+        } else {
+          dot.classList.add('err');
+          btn.title = 'Scan a relay QR code';
+        }
+        btn.append(dot, label);
+      }
+
+      function refreshAllNodeTransport() {
+        WS.nodes.forEach((n) => refreshNodeTransport(n.id));
+      }
+
       function makeNodeEl(node) {
         const t = TYPES[node.type];
         const el = document.createElement('div');
@@ -1861,7 +2167,7 @@
 
         el.innerHTML = `
       <div class="head">
-        <div class="title">${t.title}</div>
+        <div class="titleRow"><div class="title">${t.title}</div><button type="button" class="node-transport">NKN</button></div>
         <div class="row" style="gap:6px;">
           <button class="gear" title="Settings">⚙</button>
           ${node.type === 'ASR' ? `<button class="gear asrPlay" title="Start/Stop">▶</button>` : ''}
@@ -1893,12 +2199,32 @@
     </div>
     `;
 
-        // status row (NKN & type)
-        const stat = document.createElement('div');
-        stat.className = 'row'; stat.style.cssText = 'gap:8px;margin-top:6px;align-items:center;';
-        stat.innerHTML = `<span title="NKN"><span class="dot ${CFG.transport === 'nkn' ? (Net.nkn.ready ? 'ok' : 'warn') : 'err'}"></span>NKN</span>
-                    <span class="muted">${node.type}</span>`;
-        el.querySelector('.body').appendChild(stat);
+        const transportBtn = el.querySelector('.node-transport');
+        if (transportBtn) {
+          transportBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const rec = NodeStore.ensure(node.id, node.type);
+            const relay = (rec.config?.relay || '').trim();
+            if (relay) {
+              NodeStore.setRelay(node.id, node.type, '');
+              refreshNodeTransport(node.id);
+              saveGraph();
+              updateTransportButton();
+              setBadge('Switched to HTTP');
+            } else {
+              openQrScanner(null, (txt) => {
+                if (!txt) return;
+                NodeStore.setRelay(node.id, node.type, txt.trim());
+                refreshNodeTransport(node.id);
+                saveGraph();
+                updateTransportButton();
+                setBadge('NKN relay saved');
+              });
+            }
+          });
+          refreshNodeTransport(node.id);
+        }
+
         // ---- resize handle (bottom-right) -----------------------------------------
         const rh = document.createElement('div');
         rh.setAttribute('data-resize', '');
@@ -1968,16 +2294,33 @@
 
           // NEW: drag from INPUT (newFromInput) or retarget an existing wire at this input
           r.addEventListener('pointerdown', (ev) => {
+            if (ev.pointerType === 'touch') ev.preventDefault();
             const wires = connectedWires(node.id, 'in', p.name);
             if (wires.length) {
               // Retarget wire: drag the input end ("to")
               const w = wires[wires.length - 1];
               w.path?.setAttribute('stroke-dasharray', '6 4');
-              const move = (e) => { const pt = clientToWorkspace(e.clientX, e.clientY); drawRetarget(w, 'to', pt.x, pt.y) };
-              const up = (e) => finishAnyDrag(e.clientX, e.clientY);
-              WS.drag = { kind: 'retarget', wireId: w.id, grabSide: 'to', path: w.path, pointerId: ev.pointerId, _cleanup: () => window.removeEventListener('pointermove', move) };
-              window.addEventListener('pointermove', move);
-              window.addEventListener('pointerup', up, { once: true });
+              const move = (e) => {
+                if (e.pointerType === 'touch') e.preventDefault();
+                if (WS.drag) WS.drag.lastClient = { x: e.clientX, y: e.clientY };
+                const pt = clientToWorkspace(e.clientX, e.clientY);
+                drawRetarget(w, 'to', pt.x, pt.y);
+                if (WS.drag) updateDropHover(WS.drag.expected);
+              };
+              const up = (e) => { setDropHover(null); finishAnyDrag(e.clientX, e.clientY); };
+              WS.drag = {
+                kind: 'retarget',
+                wireId: w.id,
+                grabSide: 'to',
+                path: w.path,
+                pointerId: ev.pointerId,
+                expected: 'out',
+                lastClient: { x: ev.clientX, y: ev.clientY },
+                _cleanup: () => window.removeEventListener('pointermove', move)
+              };
+              window.addEventListener('pointermove', move, { passive: false });
+              window.addEventListener('pointerup', up, { once: true, passive: false });
+              updateDropHover('out');
               return;
             }
             // Start a new temp from INPUT -> must drop on an OUTPUT
@@ -1992,12 +2335,29 @@
             path.setAttribute('pointer-events', 'none');
             WS.svgLayer.appendChild(path);
 
-            const move = (e) => { const pt = clientToWorkspace(e.clientX, e.clientY); drawTempFromPort({ nodeId: node.id, side: 'in', portName: p.name }, pt.x, pt.y) };
-            const up = (e) => finishAnyDrag(e.clientX, e.clientY);
-            WS.drag = { kind: 'newFromInput', toNodeId: node.id, toPort: p.name, path, pointerId: ev.pointerId, _cleanup: () => window.removeEventListener('pointermove', move) };
-            window.addEventListener('pointermove', move);
-            window.addEventListener('pointerup', up, { once: true });
-            const pt = clientToWorkspace(ev.clientX, ev.clientY); drawTempFromPort({ nodeId: node.id, side: 'in', portName: p.name }, pt.x, pt.y);
+            const move = (e) => {
+              if (e.pointerType === 'touch') e.preventDefault();
+              if (WS.drag) WS.drag.lastClient = { x: e.clientX, y: e.clientY };
+              const pt = clientToWorkspace(e.clientX, e.clientY);
+              drawTempFromPort({ nodeId: node.id, side: 'in', portName: p.name }, pt.x, pt.y);
+              updateDropHover(WS.drag?.expected);
+            };
+            const up = (e) => { setDropHover(null); finishAnyDrag(e.clientX, e.clientY); };
+            WS.drag = {
+              kind: 'newFromInput',
+              toNodeId: node.id,
+              toPort: p.name,
+              path,
+              pointerId: ev.pointerId,
+              expected: 'out',
+              lastClient: { x: ev.clientX, y: ev.clientY },
+              _cleanup: () => window.removeEventListener('pointermove', move)
+            };
+            window.addEventListener('pointermove', move, { passive: false });
+            window.addEventListener('pointerup', up, { once: true, passive: false });
+            const pt = clientToWorkspace(ev.clientX, ev.clientY);
+            drawTempFromPort({ nodeId: node.id, side: 'in', portName: p.name }, pt.x, pt.y);
+            updateDropHover('out');
           });
 
           left.appendChild(r);
@@ -2019,16 +2379,33 @@
 
           // NEW: drag from OUTPUT (new) or retarget existing wire(s) at this output
           r.addEventListener('pointerdown', (ev) => {
+            if (ev.pointerType === 'touch') ev.preventDefault();
             const wires = connectedWires(node.id, 'out', p.name);
             if (wires.length) {
               // Retarget: drag the output end ("from")
               const w = wires[wires.length - 1];
               w.path?.setAttribute('stroke-dasharray', '6 4');
-              const move = (e) => { const pt = clientToWorkspace(e.clientX, e.clientY); drawRetarget(w, 'from', pt.x, pt.y) };
-              const up = (e) => finishAnyDrag(e.clientX, e.clientY);
-              WS.drag = { kind: 'retarget', wireId: w.id, grabSide: 'from', path: w.path, pointerId: ev.pointerId, _cleanup: () => window.removeEventListener('pointermove', move) };
-              window.addEventListener('pointermove', move);
-              window.addEventListener('pointerup', up, { once: true });
+              const move = (e) => {
+                if (e.pointerType === 'touch') e.preventDefault();
+                if (WS.drag) WS.drag.lastClient = { x: e.clientX, y: e.clientY };
+                const pt = clientToWorkspace(e.clientX, e.clientY);
+                drawRetarget(w, 'from', pt.x, pt.y);
+                if (WS.drag) updateDropHover(WS.drag.expected);
+              };
+              const up = (e) => { setDropHover(null); finishAnyDrag(e.clientX, e.clientY); };
+              WS.drag = {
+                kind: 'retarget',
+                wireId: w.id,
+                grabSide: 'from',
+                path: w.path,
+                pointerId: ev.pointerId,
+                expected: 'in',
+                lastClient: { x: ev.clientX, y: ev.clientY },
+                _cleanup: () => window.removeEventListener('pointermove', move)
+              };
+              window.addEventListener('pointermove', move, { passive: false });
+              window.addEventListener('pointerup', up, { once: true, passive: false });
+              updateDropHover('in');
               return;
             }
             // Start a new temp from OUTPUT -> must drop on an INPUT
@@ -2043,12 +2420,29 @@
             path.setAttribute('pointer-events', 'none');
             WS.svgLayer.appendChild(path);
 
-            const move = (e) => { const pt = clientToWorkspace(e.clientX, e.clientY); drawTempFromPort({ nodeId: node.id, side: 'out', portName: p.name }, pt.x, pt.y) };
-            const up = (e) => finishAnyDrag(e.clientX, e.clientY);
-            WS.drag = { kind: 'new', fromNodeId: node.id, fromPort: p.name, path, pointerId: ev.pointerId, _cleanup: () => window.removeEventListener('pointermove', move) };
-            window.addEventListener('pointermove', move);
-            window.addEventListener('pointerup', up, { once: true });
-            const pt = clientToWorkspace(ev.clientX, ev.clientY); drawTempFromPort({ nodeId: node.id, side: 'out', portName: p.name }, pt.x, pt.y);
+            const move = (e) => {
+              if (e.pointerType === 'touch') e.preventDefault();
+              if (WS.drag) WS.drag.lastClient = { x: e.clientX, y: e.clientY };
+              const pt = clientToWorkspace(e.clientX, e.clientY);
+              drawTempFromPort({ nodeId: node.id, side: 'out', portName: p.name }, pt.x, pt.y);
+              updateDropHover(WS.drag?.expected);
+            };
+            const up = (e) => { setDropHover(null); finishAnyDrag(e.clientX, e.clientY); };
+            WS.drag = {
+              kind: 'new',
+              fromNodeId: node.id,
+              fromPort: p.name,
+              path,
+              pointerId: ev.pointerId,
+              expected: 'in',
+              lastClient: { x: ev.clientX, y: ev.clientY },
+              _cleanup: () => window.removeEventListener('pointermove', move)
+            };
+            window.addEventListener('pointermove', move, { passive: false });
+            window.addEventListener('pointerup', up, { once: true, passive: false });
+            const pt = clientToWorkspace(ev.clientX, ev.clientY);
+            drawTempFromPort({ nodeId: node.id, side: 'out', portName: p.name }, pt.x, pt.y);
+            updateDropHover('in');
           });
 
           right.appendChild(r);
@@ -2142,12 +2536,28 @@
       }
 
       // NEW: temp/retarget visuals + drag lifecycle
+      let dropHoverEl = null;
+      function setDropHover(el) {
+        if (dropHoverEl === el) return;
+        if (dropHoverEl) dropHoverEl.classList.remove('drop-hover');
+        dropHoverEl = el;
+        if (dropHoverEl) dropHoverEl.classList.add('drop-hover');
+      }
+      function updateDropHover(expected) {
+        if (!WS.drag || !WS.drag.lastClient || !expected) { setDropHover(null); return; }
+        const el = document.elementFromPoint(WS.drag.lastClient.x, WS.drag.lastClient.y);
+        const selector = expected === 'in' ? '.wp-port.in' : '.wp-port.out';
+        const target = el && el.closest?.(selector);
+        setDropHover(target || null);
+      }
+
       function clearTempLink() {
         if (WS.drag?.kind && WS.drag.path) {
           if (WS.drag.kind === 'retarget') WS.drag.path.setAttribute('stroke-dasharray', '');
           else WS.drag.path.remove();
         }
         WS.drag = null;
+        setDropHover(null);
       }
 
       function drawTempFromPort(from, mx, my) {
@@ -2156,6 +2566,7 @@
         const b = { x: mx, y: my };
         const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
         WS.drag.path.setAttribute('d', `M ${a.x},${a.y} C ${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`);
+        if (WS.drag?.expected) updateDropHover(WS.drag.expected);
       }
       function drawRetarget(wire, grabSide, mx, my) {
         if (!wire?.path) return;
@@ -2163,10 +2574,12 @@
         const b = (grabSide === 'to') ? { x: mx, y: my } : portCenter(wire.to.node, 'in', wire.to.port);
         const dx = Math.max(40, Math.abs(b.x - a.x) * 0.5);
         wire.path.setAttribute('d', `M ${a.x},${a.y} C ${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`);
+        if (WS.drag?.expected) updateDropHover(WS.drag.expected);
       }
       function finishAnyDrag(cx, cy) {
         try { WS.drag?._cleanup && WS.drag._cleanup() } catch { }
         const el = document.elementFromPoint(cx, cy);
+        setDropHover(null);
 
         // new from OUTPUT -> drop on INPUT
         if (WS.drag?.kind === 'new') {
@@ -2440,18 +2853,32 @@
             if (f.placeholder) inp.placeholder = f.placeholder;
             inp.name = f.key; inp.value = (cfg[f.key] !== undefined && cfg[f.key] !== null) ? String(cfg[f.key]) : String(f.def ?? '');
             if (f.step) inp.step = f.step;
-            fields.appendChild(lab); fields.appendChild(inp);
+            let control = inp;
+            if (f.key === 'relay') {
+              const wrap = document.createElement('div');
+              wrap.className = 'input-with-btn';
+              wrap.appendChild(inp);
+              const btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'ghost';
+              btn.textContent = 'Scan QR';
+              btn.addEventListener('click', (e) => { e.preventDefault(); openQrScanner(inp); });
+              wrap.appendChild(btn);
+              control = wrap;
+            }
+            fields.appendChild(lab); fields.appendChild(control);
           }
 
-        }
-        form.dataset.nodeId = nodeId;
-        help.textContent = `${TYPES[n.type].title} • ${nodeId}`;
-        modal.classList.remove('hidden'); modal.setAttribute('aria-hidden', 'false');
       }
-      function closeSettings() {
-        const modal = qs('#settingsModal'); const form = qs('#settingsForm');
-        delete form.dataset.nodeId; modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true');
-      }
+      form.dataset.nodeId = nodeId;
+      help.textContent = `${TYPES[n.type].title} • ${nodeId}`;
+      modal.classList.remove('hidden'); modal.setAttribute('aria-hidden', 'false');
+    }
+    function closeSettings() {
+      const modal = qs('#settingsModal'); const form = qs('#settingsForm');
+      delete form.dataset.nodeId; modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true');
+      closeQrScanner();
+    }
       function bindModal() {
         qs('#closeSettings')?.addEventListener('click', closeSettings);
         qs('#cancelSettings')?.addEventListener('click', closeSettings);
@@ -2622,39 +3049,100 @@
 
       function bindViewportControls() {
         let pan = null;
+        const touches = new Map();
+        let pinch = null;
+
+        const updateTouch = (id, x, y) => {
+          if (touches.has(id)) {
+            touches.set(id, { x, y });
+          }
+        };
+
+        const removeTouch = (id) => {
+          touches.delete(id);
+          if (pinch && !pinch.ids.every(pid => touches.has(pid))) {
+            pinch = null;
+          }
+        };
+
+        const maybeStartPinch = () => {
+          if (pinch || touches.size < 2 || WS.drag) return;
+          const entries = Array.from(touches.entries()).slice(0, 2);
+          if (entries.length < 2) return;
+          const [[idA, a], [idB, b]] = entries;
+          const dist = Math.max(10, Math.hypot(a.x - b.x, a.y - b.y));
+          pinch = { ids: [idA, idB], startDist: dist, startScale: WS.view.scale };
+          pan = null;
+        };
 
         const onPanDown = (e) => {
-          // Don’t pan when grabbing interactive bits
           const hitNode = e.target.closest('.node');
           const hitPort = e.target.closest('.wp-port');
           const hitResize = e.target.closest('[data-resize]');
           const hitWire = e.target.closest('path[data-id]');
 
-          // Pan when clicking the background anywhere inside the wrapper
           const isBackground =
             !hitNode && !hitPort && !hitResize && !hitWire &&
             (e.target === WS.root || e.target === WS.el || e.target === WS.svg ||
               e.target.closest('#workspace') || e.target.closest('#linksSvg'));
 
-          if (!isBackground) return;
+          if (e.pointerType === 'touch') {
+            touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            maybeStartPinch();
+            e.preventDefault();
+            if (pinch) return;
+          }
 
-          pan = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: WS.view.x, oy: WS.view.y };
-          (WS.root || WS.el).setPointerCapture?.(e.pointerId);
-          document.body.style.cursor = 'grabbing';
+          if (!isBackground || pinch) return;
+
+          pan = { id: e.pointerId, sx: e.clientX, sy: e.clientY, ox: WS.view.x, oy: WS.view.y, pointerType: e.pointerType };
+          if (e.pointerType !== 'touch') (WS.root || WS.el).setPointerCapture?.(e.pointerId);
+          if (e.pointerType === 'mouse') document.body.style.cursor = 'grabbing';
         };
 
-
         const onPanMove = (e) => {
-          if (!pan) return;
+          if (touches.has(e.pointerId)) {
+            updateTouch(e.pointerId, e.clientX, e.clientY);
+            if (!pinch) maybeStartPinch();
+          }
+
+          if (pinch) {
+            const pts = pinch.ids.map(id => touches.get(id)).filter(Boolean);
+            if (pts.length < 2) {
+              pinch = null;
+              return;
+            }
+            const dist = Math.max(10, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y));
+            const target = clamp(pinch.startScale * (dist / pinch.startDist), 0.4, 3.0);
+            const current = WS.view.scale;
+            if (target > 0 && Math.abs(target - current) > 1e-3) {
+              const dz = Math.log(target / current);
+              zoomAt((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2, dz);
+            }
+            return;
+          }
+
+          if (!pan || pan.id !== e.pointerId) return;
           const dx = e.clientX - pan.sx, dy = e.clientY - pan.sy;
           WS.view.x = pan.ox + dx;
           WS.view.y = pan.oy + dy;
           applyViewTransform();
         };
-        const onPanUp = () => {
-          if (!pan) return;
-          pan = null;
-          document.body.style.cursor = '';
+
+        const onPanUp = (e) => {
+          if (pan && pan.id === e.pointerId) {
+            pan = null;
+            if (e.pointerType === 'mouse') document.body.style.cursor = '';
+          }
+          removeTouch(e.pointerId);
+        };
+
+        const onPanCancel = (e) => {
+          if (pan && pan.id === e.pointerId) {
+            pan = null;
+            if (e.pointerType === 'mouse') document.body.style.cursor = '';
+          }
+          removeTouch(e.pointerId);
         };
 
         const onWheel = (e) => {
@@ -2677,10 +3165,13 @@
         };
 
 
-        (WS.root || WS.el).addEventListener('pointerdown', onPanDown);
-        (WS.root || WS.el).addEventListener('pointermove', onPanMove);
-        (WS.root || WS.el).addEventListener('pointerup', onPanUp);
-        (WS.root || WS.el).addEventListener('wheel', onWheel, { passive: false });
+        const rootEl = (WS.root || WS.el);
+        rootEl.addEventListener('pointerdown', onPanDown, { passive: false });
+        rootEl.addEventListener('pointermove', onPanMove, { passive: false });
+        rootEl.addEventListener('pointerup', onPanUp, { passive: false });
+        rootEl.addEventListener('pointercancel', onPanCancel, { passive: false });
+        rootEl.addEventListener('pointerleave', onPanCancel, { passive: false });
+        rootEl.addEventListener('wheel', onWheel, { passive: false });
       }
       function init() {
         WS.el = qs('#workspace');
@@ -2716,26 +3207,41 @@
 
 
 
-      return { init, addNode, save: saveGraph, load: loadGraph, getNode: (id) => WS.nodes.get(id) };
+      return { init, addNode, save: saveGraph, load: loadGraph, getNode: (id) => WS.nodes.get(id), refreshTransportButtons: refreshAllNodeTransport };
     })();
 
     /* ============================================================
        Boot / bindings
        ============================================================ */
     function bindUI() {
-      // global transport & nkn
-      const tr = qs('#transport'); if (tr) { tr.value = CFG.transport; tr.addEventListener('change', e => { CFG.transport = e.target.value; saveCFG(); if (CFG.transport === 'nkn') Net.ensureNkn(); setBadge('Saved') }) }
-      qs('#nknConnect')?.addEventListener('click', () => Net.ensureNkn());
-      qs('#nknDisconnect')?.addEventListener('click', () => { try { Net.nkn.client && Net.nkn.client.close() } catch { } Net.nkn.client = null; Net.nkn.ready = false; const i = qs('#nknInfo'); if (i) i.textContent = 'disconnected'; setBadge('NKN off') });
-      qs('#saveAll')?.addEventListener('click', () => { saveCFG(); Graph.save(); setBadge('Saved') });
+      const toggle = qs('#transportToggle');
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          if (CFG.transport === 'nkn') {
+            CFG.transport = 'http';
+            try { Net.nkn.client && Net.nkn.client.close() } catch { }
+            Net.nkn.client = null;
+            Net.nkn.ready = false;
+            Net.nkn.addr = '';
+            saveCFG();
+            updateTransportButton();
+            setBadge('HTTP mode');
+          } else {
+            CFG.transport = 'nkn';
+            saveCFG();
+            updateTransportButton();
+            Net.ensureNkn();
+            setBadge('Connecting via NKN…');
+          }
+        });
+      }
 
       // wires
-      const state = qs('#wireState'); if (state) state.textContent = CFG.wireMode ? 'ON' : 'OFF';
-      qs('#wireToggle')?.addEventListener('click', () => { CFG.wireMode = !CFG.wireMode; if (state) state.textContent = CFG.wireMode ? 'ON' : 'OFF'; saveCFG() });
-      qs('#clearWires')?.addEventListener('click', () => Router.clear());
+      updateTransportButton();
     }
 
     function init() {
+      setupQrScanner();
       bindUI();
       Graph.init();
       Router.render();
