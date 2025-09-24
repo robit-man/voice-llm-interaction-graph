@@ -231,6 +231,7 @@ class ServiceState:
     last_error: Optional[str] = None
     log_handle: Optional[IO[str]] = None
     terminal_proc: Optional[subprocess.Popen] = None
+    terminal_pid_path: Optional[Path] = None
     fallback_mode: bool = False
     restart_attempts: int = 0
 
@@ -345,6 +346,7 @@ class ServiceWatchdog:
                     with contextlib.suppress(Exception):
                         term.kill()
             state.terminal_proc = None
+            self._cleanup_terminal_tail(state)
             if state.supervisor and state.supervisor.is_alive():
                 state.supervisor.join(timeout=timeout)
 
@@ -617,12 +619,28 @@ class ServiceWatchdog:
         if state.terminal_proc and state.terminal_proc.poll() is None:
             return
         title = f"{state.definition.name} logs"
-        cmd = f"tail -n 200 -f {shlex.quote(str(state.log_path))}"
+        pid_path = LOGS_ROOT / f"{state.definition.name}.tail.pid"
+        with contextlib.suppress(FileNotFoundError):
+            pid_path.unlink()
+        state.terminal_pid_path = pid_path
+        quoted_pid = shlex.quote(str(pid_path))
+        quoted_log = shlex.quote(str(state.log_path))
+        cmd = (
+            f"printf '%d\\n' $$ > {quoted_pid} && "
+            f"exec tail -n 200 -f {quoted_log}"
+        )
         args = [segment.format(title=title, cmd=cmd) for segment in self._terminal_template]
         try:
             state.terminal_proc = subprocess.Popen(args, cwd=state.workdir, start_new_session=True)
         except Exception as exc:
             state.last_error = f"terminal launch failed: {exc}"
+            state.terminal_pid_path = None
+            return
+        # Best-effort wait for the PID file to appear so we can reap the tail later.
+        for _ in range(20):
+            if pid_path.exists():
+                break
+            time.sleep(0.1)
 
     def _close_log(self, state: ServiceState) -> None:
         if state.log_handle:
@@ -630,6 +648,7 @@ class ServiceWatchdog:
                 state.log_handle.flush()
                 state.log_handle.close()
             state.log_handle = None
+        self._cleanup_terminal_tail(state)
         term = state.terminal_proc
         if term:
             if term.poll() is None:
@@ -641,6 +660,63 @@ class ServiceWatchdog:
                     with contextlib.suppress(Exception):
                         term.kill()
             state.terminal_proc = None
+
+    def _cleanup_terminal_tail(self, state: ServiceState) -> None:
+        pid_path = state.terminal_pid_path
+        if not pid_path:
+            return
+        pid = self._read_pid_file(pid_path)
+        if pid:
+            self._terminate_tail_pid(pid, state.log_path)
+        with contextlib.suppress(Exception):
+            pid_path.unlink()
+        state.terminal_pid_path = None
+
+    def _read_pid_file(self, path: Path) -> Optional[int]:
+        try:
+            raw = path.read_text().strip()
+            return int(raw) if raw else None
+        except Exception:
+            return None
+
+    def _terminate_tail_pid(self, pid: int, log_path: Path) -> None:
+        if pid <= 0:
+            return
+        if not self._pid_targets_log(pid, log_path):
+            return
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGTERM)
+        for _ in range(20):
+            if not self._pid_alive(pid):
+                break
+            time.sleep(0.1)
+        else:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+
+    def _pid_alive(self, pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def _pid_targets_log(self, pid: int, log_path: Path) -> bool:
+        proc_root = Path("/proc")
+        if not proc_root.exists():  # Fallback for platforms without /proc
+            return True
+        cmdline_path = proc_root / str(pid) / "cmdline"
+        try:
+            data = cmdline_path.read_bytes()
+        except Exception:
+            return False
+        parts = [segment.decode("utf-8", "ignore") for segment in data.split(b"\0") if segment]
+        if not parts:
+            return False
+        if "tail" not in parts[0]:
+            return False
+        target = str(log_path)
+        return any(target in segment for segment in parts[1:])
 
 
 # Router logging setup
